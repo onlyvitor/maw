@@ -4,6 +4,7 @@
 // caller renders.
 
 use crate::fileio::{EditorFile, OpenError, PrimitiveError, SaveError};
+use crate::io::input::Key;
 use std::path::Path;
 
 /// An open buffer plus the editing state that lives above the file.
@@ -48,12 +49,12 @@ pub enum CursorMotion {
     Down,
 }
 
-/* What the caller has to do after a key was handled. */
+/* What the caller has to do after a key was handled. Errors are the
+ * Err side of handle_key and end the session with status 1. */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorAction {
     Continue,
     Quit,
-    Error,
 }
 
 /* The part of the buffer that has to be repainted after a change. */
@@ -189,6 +190,90 @@ pub fn move_down(ed: &mut Editor) -> CursorMotion {
     CursorMotion::Down
 }
 
+/* Apply one decoded key to the editor and describe what to repaint.
+ * Errors end the session with status 1, carrying the message text of
+ * the file layer. */
+pub fn handle_key(
+    ed: &mut Editor,
+    key: Key,
+    change: &mut EditorChange,
+) -> Result<EditorAction, EditorError> {
+    *change = EditorChange::None;
+
+    if key == Key::CtrlD {
+        return Ok(EditorAction::Quit);
+    }
+
+    if key == Key::CtrlS {
+        ed.file.save().map_err(EditorError::Save)?;
+        ed.dirty = false;
+        return Ok(EditorAction::Continue);
+    }
+
+    let motion = match key {
+        Key::Left => move_left(ed),
+        Key::Right => move_right(ed),
+        Key::Up => move_up(ed),
+        Key::Down => move_down(ed),
+        Key::Backspace => return handle_backspace_key(ed, change),
+        /* Ctrl+D and Ctrl+S were handled before this match. */
+        Key::CtrlD | Key::CtrlS => unreachable!("keys handled above"),
+        Key::Byte(byte) => return handle_insert_key(ed, byte, change),
+    };
+
+    *change = EditorChange::Cursor(motion);
+    Ok(EditorAction::Continue)
+}
+
+/* Backspace removes the previous byte and may join two lines. */
+fn handle_backspace_key(
+    ed: &mut Editor,
+    change: &mut EditorChange,
+) -> Result<EditorAction, EditorError> {
+    if ed.cursor == 0 {
+        return Ok(EditorAction::Continue);
+    }
+
+    let pos = ed.cursor - 1;
+    let removed_newline = ed.file.data()[pos] == b'\n';
+    let start = line_start_index(ed.file.data(), pos);
+
+    ed.file.remove(pos).map_err(EditorError::Buffer)?;
+
+    ed.cursor = pos;
+    ed.dirty = true;
+
+    *change = EditorChange::Line {
+        start,
+        removed_newline,
+    };
+
+    Ok(EditorAction::Continue)
+}
+
+/* Typed bytes insert one byte at the cursor. */
+fn handle_insert_key(
+    ed: &mut Editor,
+    byte: u8,
+    change: &mut EditorChange,
+) -> Result<EditorAction, EditorError> {
+    let at_end = ed.cursor == ed.file.len();
+    let start = line_start_index(ed.file.data(), ed.cursor);
+
+    ed.file.insert(ed.cursor, &[byte]).map_err(EditorError::Buffer)?;
+
+    ed.cursor += 1;
+    ed.dirty = true;
+
+    *change = if at_end {
+        EditorChange::Append { byte }
+    } else {
+        EditorChange::Line { start, removed_newline: false }
+    };
+
+    Ok(EditorAction::Continue)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,5 +397,134 @@ mod tests {
         ed.cursor = 9; /* empty last line, nothing below */
         assert_eq!(move_down(&mut ed), CursorMotion::None);
         assert_eq!(ed.cursor, 9);
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* key handling                                                     */
+    /* ---------------------------------------------------------------- */
+
+    fn press(ed: &mut Editor, key: Key) -> (EditorAction, EditorChange) {
+        let mut change = EditorChange::None;
+        let action = handle_key(ed, key, &mut change).unwrap();
+        (action, change)
+    }
+
+    #[test]
+    fn typed_keys_append_at_the_end_of_the_buffer() {
+        let mut ed = make_editor(b"abc");
+
+        let (action, change) = press(&mut ed, Key::Byte(b'X'));
+
+        assert_eq!(action, EditorAction::Continue);
+        assert_eq!(change, EditorChange::Append { byte: b'X' });
+        assert_eq!(ed.file.data(), b"abcX");
+        assert_eq!(ed.cursor, 4);
+        assert!(ed.dirty);
+    }
+
+    #[test]
+    fn typed_keys_in_the_middle_repaint_the_line() {
+        let mut ed = make_editor(b"abc");
+        ed.cursor = 1;
+
+        let (action, change) = press(&mut ed, Key::Byte(b'X'));
+
+        assert_eq!(action, EditorAction::Continue);
+        assert_eq!(change, EditorChange::Line { start: 0, removed_newline: false });
+        assert_eq!(ed.file.data(), b"aXbc");
+        assert_eq!(ed.cursor, 2);
+    }
+
+    #[test]
+    fn backspace_joins_lines_at_a_newline() {
+        let mut ed = make_editor(b"ab\ncd");
+        let mut change = EditorChange::None;
+
+        ed.cursor = 0;
+        handle_key(&mut ed, Key::Backspace, &mut change).unwrap();
+        assert_eq!(change, EditorChange::None);
+        assert_eq!(ed.file.data(), b"ab\ncd");
+
+        /* Joining the two lines. */
+        ed.cursor = 3;
+        handle_key(&mut ed, Key::Backspace, &mut change).unwrap();
+
+        assert_eq!(
+            change,
+            EditorChange::Line { start: 0, removed_newline: true }
+        );
+        assert_eq!(ed.cursor, 2);
+        assert_eq!(ed.file.data(), b"abcd");
+        assert!(ed.dirty);
+    }
+
+    #[test]
+    fn arrow_keys_report_a_cursor_change() {
+        let mut ed = make_editor(b"ab\ncd");
+        ed.cursor = 3;
+
+        let (action, change) = press(&mut ed, Key::Left);
+
+        assert_eq!(action, EditorAction::Continue);
+        assert_eq!(change, EditorChange::Cursor(CursorMotion::PreviousLine));
+        assert_eq!(ed.cursor, 2);
+        assert!(!ed.dirty, "motions do not dirty the buffer");
+    }
+
+    #[test]
+    fn ctrl_d_quits_without_touching_the_buffer() {
+        let mut ed = make_editor(b"");
+
+        let (action, change) = press(&mut ed, Key::CtrlD);
+
+        assert_eq!(action, EditorAction::Quit);
+        assert_eq!(change, EditorChange::None);
+        assert!(ed.file.is_empty());
+    }
+
+    #[test]
+    fn ctrl_s_saves_and_clears_the_dirty_flag() {
+        let dir = crate::fileio::tests::make_temp_dir("ctrls");
+        let path = dir.join("file.txt");
+
+        let mut ed = Editor::open(&path).unwrap();
+
+        press(&mut ed, Key::Byte(b'!'));
+        let (action, change) = press(&mut ed, Key::CtrlS);
+
+        assert_eq!(action, EditorAction::Continue);
+        assert_eq!(change, EditorChange::None);
+        assert!(!ed.dirty, "the save cleared the dirty flag");
+
+        let mut content = Vec::new();
+        use std::io::Read;
+        std::fs::File::open(&path)
+            .unwrap()
+            .read_to_end(&mut content)
+            .unwrap();
+        assert_eq!(content, b"!");
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn ctrl_s_reports_a_failing_save() {
+        let dir = crate::fileio::tests::make_temp_dir("ctrls-broken");
+
+        /* Point the path into a directory that will vanish. */
+        let mut ed = Editor::open(&dir.join("gone/file.txt")).unwrap();
+        press(&mut ed, Key::Byte(b'x'));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        let mut change = EditorChange::None;
+        let err = handle_key(&mut ed, Key::CtrlS, &mut change).unwrap_err();
+
+        assert!(matches!(err, EditorError::Save(_)));
+        assert!(
+            err.to_string().starts_with("error: cannot create"),
+            "unexpected message: {err}"
+        );
     }
 }
