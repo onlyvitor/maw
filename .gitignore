@@ -1,6 +1,4 @@
-oldvim
 target
 .vscode
 *.tmp.*
 text.rst
-tests/unit_tests

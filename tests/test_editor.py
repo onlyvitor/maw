@@ -8,10 +8,16 @@ import sys
 import tempfile
 import time
 
-# OLDVIM_BIN points the suite at another build, e.g. the Rust port.
+# The built Rust binary; OLDVIM_BIN overrides for out-of-tree builds.
 BIN = os.environ.get(
     "OLDVIM_BIN",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "oldvim"),
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "..",
+        "target",
+        "debug",
+        "oldvim",
+    ),
 )
 
 UP = b"\x1b[A"
