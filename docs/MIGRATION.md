@@ -144,7 +144,7 @@ main(argc)
 | C module | Rust module | Notes |
 | --- | --- | --- |
 | `fileio/fileio.c` | `src/fileio.rs` | `EditorFile` → owned struct `EditorFile { path: PathBuf, data: Vec<u8>, mode: u32, exist: bool }`. `Vec<u8>` replaces `data/len/cap` (capacity/holding a NUL sentinel disappear; insertion growth handled by `Vec`). The NUL terminator is not needed by any consumer other than C string ops — the render layer slices `data[start..len]`. |
-| `fileio` atomic save | `src/fileio.rs` (private fns) | Same pipeline using `std::fs` + `libc::mkstemp`-equivalent. `std` has no mkstemp; a tiny `libc` dependency (or a hand-rolled randomized 6-char suffix with `O_EXCL`) preserves the guarantee. Decision: use `tempname`-style random suffix with `open(O_CREAT\|O_EXCL)` — no new heavy deps; collapses the guarantee to "exclusive create with random name", same as mkstemp's contract. |
+| `fileio` atomic save | `src/fileio.rs` (private fns) | Same pipeline using `libc::mkstemp` directly (a hand-rolled random-suffix fallback would only weaken the exclusivity guarantee that mkstemp already provides). `std` marks close() as unfallible, so the fallible `close` is performed through libc with the same error check as the original. |
 | `io/terminal` | `src/io/terminal.rs` | Raw mode via `libc::tcgetattr/tcsetattr` (termios is not in `std`). State lives in the main flow instead of globals where possible; the signal-handler path needs process-global state — kept minimal and initialized in `main`. |
 | `io/input` | `src/io/input.rs` | `scan() -> Key` with `enum Key { Byte(u8), Backspace, CtrlS, CtrlD, Exit, Up, Down, Left, Right }`. `Exit` replaces EOF (std read gives `Result<usize, io::Error>`; error ⇒ propagate). |
 | `io/output` | `src/io/output.rs` | Same primitives over `io::stdout().write()`; `apply_change(ed, change)` keeps the exact escape-code sequences. |
@@ -205,37 +205,67 @@ main(argc)
 
 ## 5. Migration Roadmap
 
-Phase 0 — analysis (this document).
+Phase 0 — analysis (this document). ✔
 
 Phase 1 — foundation
-- [ ] Chore: initialize Rust project structure (`Cargo.toml`, `src/`, `.gitignore` additions; keep C untouched)
+- [x] Chore: initialize Rust project structure (`Cargo.toml`, `src/`, `.gitignore` additions; keep C untouched)
 
 Phase 2 — core leaf modules upward (dependency order: fileio → editor → terminal → input → output → main)
-- [ ] `feat: load files into the editor buffer in Rust` (open_file: existing/new, mode capture) + unit tests (F2, F3)
-- [ ] `feat: add byte insert and remove primitives to the Rust file layer` + growth/NUL-equivalent tests (F17)
-- [ ] `feat: save files atomically in the Rust file layer` + save tests (F18)
-- [ ] `feat: implement the editor state and line helpers in Rust` + tests (§1.2 semantics)
-- [ ] `feat: implement cursor movement in Rust` + tests (F16)
-- [ ] `feat: dispatch keys through the Rust editor` + tests (F8, F9, F11–F13)
-- [ ] `feat: switch the terminal between raw and restored modes in Rust` (F6, F7)
-- [ ] `feat: decode keys from stdin in Rust` (F14, F15)
-- [ ] `feat: render editor changes with escape codes in Rust` (F5 draw/application side)
-- [ ] `feat: wire the Rust editor main loop` (F1, F4, F5, F10, F19, F20, F21)
+- [x] `feat: load files into the editor buffer in Rust` (open_file: existing/new, mode capture)
+- [x] `feat: add positional insert and remove primitives to the file layer`
+- [x] `feat: save files atomically from the Rust file layer`
+- [x] `feat: implement the editor state and cursor motions in Rust`
+- [x] `feat: decode key presses from stdin in Rust`
+- [x] `feat: dispatch keys through the Rust editor`
+- [x] `feat: switch the terminal between raw and saved modes in Rust`
+- [x] `feat: render editor changes with escape codes in Rust`
+- [x] `feat: wire the Rust editor main loop`
 
 Phase 3 — parity
-- [ ] `test: port the unit suite to Rust` (F22)
-- [ ] `test: point the pty suite at the Rust binary` (F23)
-- [ ] Behavior comparison runs against the C binary (recorded diffs)
+- [x] `fix: treat the erase byte 0x7f as backspace like the original` (found by the pty diff)
+- [x] `test: port the remaining unit cases from the C suite`
+- [x] `test: point the pty suite at the Rust binary` (via `OLDVIM_BIN`; committed with the fix)
+- [x] Behavior comparison runs against the C binary: pty suite PASS (8/8) on debug and release;
+      byte-level screen-output diffs MATCH for join-lines, up/down clamping, insert-in-middle,
+      backspace-at-start, plain typing and EOF; SIGINT/SIGTERM/SIGHUP exit statuses identical
+      (130/143/129, file untouched).
 
 Phase 4 — documentation
 - [ ] `docs: describe building and running the Rust editor`
 
 ## 6. Risk register
 
-- mkstemp replacement must not regress the kept-temp-on-failure file semantics.
-- Raw-mode + signal restore is the only unsafe-touching area; keep it a
-  single small module.
-- The `[EOF]` and non-interactive paths must keep the same exit codes.
-- Locale/UTF-8: the C editor is byte-oriented (prints bytes, columns are
-  bytes) — the Rust version must stay byte-oriented, not become
-  char/UTF-8-aware, or movement clamping changes.
+- mkstemp parity / kept-temp semantics: resolved, mkstemp is used directly.
+- Raw-mode + signal restore is the only unsafe-touching area: kept in a
+  single small module (`src/io/terminal.rs`).
+- The `[EOF]` and non-interactive paths kept the same exit codes: verified.
+- Locale/UTF-8: the editor stays byte-oriented; verified by the pty diffs.
+
+## 7. Intentional implementation differences (Rust idioms, same behavior)
+
+1. **No NUL sentinel.** The C buffer keeps `data[len] == '\0'`; only C
+   string helpers needed it. The Rust `Vec<u8>` has none, and every
+   consumer slices by `len` — save writes `data[..len]` exactly like the
+   C `write_all(ef->data, ef->len)`.
+2. **Allocation failure is not an error path.** C checked every malloc
+   and printed `error: cannot allocate memory ...`. Rust aborts on
+   allocation failure; there is nothing to recover into. The messages
+   are dropped with this documented reason.
+3. **`ACTION_ERROR` became `Result::Err`.** `handle_key` returns
+   `Result<EditorAction, EditorError>`; the C `EditorAction::Error` +
+   status plumbing is the same control flow expressed idiomatically.
+4. **`editor_row_column`'s optional outputs collapsed** into one
+   `(row, column)` tuple — the C NULL-pointer parameters were a calling
+   convention, not behavior; both outputs were always computed at single
+   scan cost in practice.
+5. **`Key` values >0xff are gone.** The C constants above byte range
+   existed to survive an `int`-to-`char` cast; the Rust enum removes the
+   cast. `scan()` also handles byte 0x7f itself (some of that was
+   discovered by the pty diff, see the fixed commit).
+6. **Signal-data statics are atomics.** `saved_termios` lives behind
+   `AtomicPtr` (leaked box, i.e. a static); `rawmode_enabled` is an
+   `AtomicBool` — same lifecycle, race-free by construction.
+7. **`cargo fmt`/`cargo clippy`** are not installed on the development
+   machine (`rustc 1.85.1` from source tarball), so `cargo check` +
+   `cargo test` are the verified gates; the remaining checks should run
+   where the components are available.
