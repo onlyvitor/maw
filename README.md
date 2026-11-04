@@ -1,20 +1,13 @@
 # Oldvim
 
 Oldvim is a minimal terminal editor: it prints the file you opened, and
-it edits one byte at a time in raw mode until you quit or save. The
-repository carries the original C implementation plus a faithful Rust
-reimplementation that reproduces it (see `docs/MIGRATION.md`).
+it edits one byte at a time in raw mode until you quit or save.
+
+The current implementation is pure Rust (`src/`). The original C
+implementation that guided the port is preserved in the repository
+history and tagged as `c-original`.
 
 ## Building
-
-C implementation:
-
-```sh
-make             # builds the ./oldvim binary
-make run         # runs it on text.rst
-```
-
-Rust implementation:
 
 ```sh
 cargo build          # dev build
@@ -23,8 +16,7 @@ cargo test           # unit tests, 33 checks
 cargo run -- text.rst
 ```
 
-The Rust binary is `target/<profile>/oldvim`; it behaves identically to
-the C binary on every currently testable path.
+The binary is `target/<profile>/oldvim`.
 
 ## Controls
 
@@ -49,23 +41,22 @@ printf 'ZZ' | oldvim file.txt > /dev/null
 ## Layout
 
 ```
-main.c / src/main.rs    wiring: open, raw mode, draw, key loop, save
-fileio/ , src/fileio.rs the buffer, loading and the atomic save
-editor/, src/editor.rs  cursor motions and key dispatch, no I/O
-io/input                key decoding
-io/output               escape-code rendering
-io/terminal             raw mode and signal restoration
-tests/unit_test.c       C unit suite
-tests/test_editor.py    pty end-to-end suite (build-agnostic via OLDVIM_BIN)
-src/*.rs                Rust reimplementation modules
+src/main.rs        wiring: open, raw mode, draw, key loop, save
+src/fileio.rs      the buffer, loading and the atomic save
+src/editor.rs      cursor motions and key dispatch, no I/O
+src/io/input.rs    key decoding
+src/io/output.rs   escape-code rendering
+src/io/terminal.rs raw mode and signal restoration
+tests/test_editor.py  pty end-to-end suite
+docs/MIGRATION.md  architecture, behavior map and migration history
 ```
 
 ## Tests
 
 ```sh
-make test                                            # C suite
-OLDVIM_BIN=target/debug/oldvim python3 tests/test_editor.py   # Rust binary
+cargo test                  # unit tests
+python3 tests/test_editor.py  # end-to-end through a pty
 ```
 
-`OLDVIM_BIN` drives the same pty suite at either implementation, which
-is how the Rust port was verified side by side against the C editor.
+The pty suite drives `target/debug/oldvim`; `OLDVIM_BIN` points it at
+any other build.

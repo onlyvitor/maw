@@ -1,8 +1,10 @@
 # Oldvim → Rust Migration Document
 
 This document is the plan of record for reimplementing Oldvim in Rust.
-The original C implementation remains in this repository untouched and is
-the single source of truth for behavior.
+The original C implementation is the single source of truth for
+behavior. It lived at the top of this repository until the port
+replaced it; its exact state is preserved in the Git history under the
+tag `c-original`.
 
 ---
 
@@ -231,7 +233,9 @@ Phase 3 — parity
       (130/143/129, file untouched).
 
 Phase 4 — documentation
-- [ ] `docs: describe building and running the Rust editor`
+- [x] `docs: describe building and running the Rust editor`
+- [ ] (done) C sources removed from the working tree once the port was verified;
+      the original is preserved at the `c-original` tag and throughout history.
 
 ## 6. Risk register
 
