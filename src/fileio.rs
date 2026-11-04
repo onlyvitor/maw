@@ -113,7 +113,63 @@ impl EditorFile {
     pub fn exist(&self) -> bool {
         self.exist
     }
+
+    /* Put n bytes at pos, shifting the tail to the right. Error ranges and
+     * messages mirror insert_bytes in the original file layer. */
+    pub fn insert(&mut self, pos: usize, bytes: &[u8]) -> Result<(), PrimitiveError> {
+        if pos > self.len() {
+            return Err(PrimitiveError::InsertPosition);
+        }
+
+        if bytes.is_empty() {
+            return Ok(());
+        }
+
+        if bytes.len().checked_add(self.len()).is_none() {
+            return Err(PrimitiveError::TooLarge);
+        }
+
+        /* Vec grows and shifts the tail on its own; the original managed
+         * the same geometry with realloc and memmove. */
+        self.data.splice(pos..pos, bytes.iter().copied());
+
+        Ok(())
+    }
+
+    /* Drop the byte at pos, shifting the tail to the left. */
+    pub fn remove(&mut self, pos: usize) -> Result<(), PrimitiveError> {
+        if pos >= self.len() {
+            return Err(PrimitiveError::RemovePosition);
+        }
+
+        self.data.remove(pos);
+
+        Ok(())
+    }
 }
+
+/// Why a byte primitive refused to run.
+#[derive(Debug, PartialEq)]
+pub enum PrimitiveError {
+    /// "error: insert position is out of range"
+    InsertPosition,
+    /// "error: the file content would be too large"
+    TooLarge,
+    /// "error: remove position is out of range"
+    RemovePosition,
+}
+
+impl std::fmt::Display for PrimitiveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PrimitiveError::InsertPosition => write!(f, "error: insert position is out of range"),
+            PrimitiveError::TooLarge => write!(f, "error: the file content would be too large"),
+            PrimitiveError::RemovePosition => write!(f, "error: remove position is out of range"),
+        }
+    }
+}
+
+impl std::error::Error for PrimitiveError {}
 
 #[cfg(test)]
 mod tests {
@@ -137,6 +193,63 @@ mod tests {
     /* Test the code, not the harness. */
     fn owned(path: &Path) -> PathBuf {
         path.to_owned()
+    }
+
+    /* `Editor` in the tests below only needs the file part, so the unit
+     * tests build bare EditorFiles like make_editor() does in the C suite. */
+    fn make_file(text: &[u8]) -> EditorFile {
+        EditorFile {
+            path: PathBuf::from("unit-test.tmp"),
+            data: text.to_vec(),
+            mode: 0o644,
+            exist: false,
+        }
+    }
+
+    #[test]
+    fn insert_bytes_everywhere() {
+        let mut ef = make_file(b"");
+
+        ef.insert(0, b"hello").unwrap();
+        assert_eq!(ef.len(), 5);
+        assert_eq!(ef.data(), b"hello");
+
+        /* Insert in the middle. */
+        ef.insert(2, b"XY").unwrap();
+        assert_eq!(ef.data(), b"heXYllo");
+
+        /* Insert at the end. */
+        let end = ef.len();
+        ef.insert(end, b"!").unwrap();
+        assert_eq!(ef.data(), b"heXYllo!");
+
+        /* Zero bytes keeps the buffer untouched. */
+        let len = ef.len();
+        ef.insert(0, b"").unwrap();
+        assert_eq!(ef.len(), len);
+    }
+
+    #[test]
+    fn insert_out_of_range() {
+        let mut ef = make_file(b"abc");
+        assert_eq!(ef.insert(4, b"x"), Err(PrimitiveError::InsertPosition));
+    }
+
+    #[test]
+    fn remove_byte_at_works() {
+        let mut ef = make_file(b"abc");
+
+        ef.remove(1).unwrap();
+        assert_eq!(ef.data(), b"ac");
+        assert_eq!(ef.len(), 2);
+
+        ef.remove(1).unwrap();
+        assert_eq!(ef.data(), b"a");
+
+        ef.remove(0).unwrap();
+        assert_eq!(ef.data(), b"");
+
+        assert_eq!(ef.remove(0), Err(PrimitiveError::RemovePosition));
     }
 
     #[test]
