@@ -484,6 +484,20 @@ pub mod tests {
     }
 
     #[test]
+    fn insert_grows_the_buffer_by_chunks() {
+        let mut ef = EditorFile::from_parts_for_tests("unit-test.tmp", b"");
+
+        /* One thousand bytes in a single call, holding 'x' everywhere. */
+        ef.insert(0, &[b'x'; 1000]).unwrap();
+
+        assert_eq!(ef.len(), 1000);
+        assert_eq!(ef.data()[0], b'x');
+        assert_eq!(ef.data()[999], b'x');
+        /* Content over capacity boundaries stays intact. */
+        assert!(ef.data().iter().all(|&b| b == b'x'));
+    }
+
+    #[test]
     fn remove_byte_at_works() {
         let mut ef = make_file(b"abc");
 
@@ -552,8 +566,26 @@ pub mod tests {
     }
 
     #[test]
-    fn save_identifies_a_missing_parent_directory() {
-        let dir = make_temp_dir("vanish");
+    fn save_after_removal() {
+        let dir = make_temp_dir("removal");
+        let path = dir.join("remove.txt");
+
+        write_file(&path, b"abc\ndef\n", 0o644);
+
+        let mut ef = EditorFile::open(&owned(&path)).unwrap();
+
+        /* The newline ending the first line goes away. */
+        ef.remove(3).unwrap();
+        ef.save().unwrap();
+
+        assert_eq!(read_file(&path), b"abcdef\n");
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn save_identifies_a_missing_parent_directory() {        let dir = make_temp_dir("vanish");
 
         /* The parent directory disappears before the save: mkstemp fails,
          * and the message points at the template that could not exist. */
