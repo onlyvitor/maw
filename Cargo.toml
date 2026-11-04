@@ -1,0 +1,11 @@
+[package]
+name = "oldvim"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# termios, signals and the low-level file flags std does not expose.
+libc = "0.2"
+
+[profile.release]
+panic = "abort"
