@@ -95,10 +95,6 @@ impl EditorFile {
     }
 
     /* Readers for the layers above: the editor state and the renderer. */
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
     pub fn data(&self) -> &[u8] {
         &self.data
     }
@@ -107,16 +103,8 @@ impl EditorFile {
         self.data.len()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
-    }
-
     pub fn mode(&self) -> u32 {
         self.mode
-    }
-
-    pub fn exist(&self) -> bool {
-        self.exist
     }
 
     /* Test constructor: a private buffer with a fixed path, without
@@ -301,12 +289,18 @@ impl std::fmt::Display for SaveError {
             SaveError::Create { temp, err } => {
                 write!(f, "error: cannot create {}: {}", temp.display(), err)
             }
-            SaveError::Write { .. } => write!(f, "error: cannot write the temporary file"),
+            SaveError::Write { err, .. } => {
+                write!(f, "error: cannot write the temporary file: {err}")
+            }
             SaveError::Permissions { err, .. } => {
                 write!(f, "error: cannot set the file permissions: {err}")
             }
-            SaveError::Sync { .. } => write!(f, "error: cannot sync the temporary file"),
-            SaveError::Close { .. } => write!(f, "error: cannot close the temporary file"),
+            SaveError::Sync { err, .. } => {
+                write!(f, "error: cannot sync the temporary file: {err}")
+            }
+            SaveError::Close { err, .. } => {
+                write!(f, "error: cannot close the temporary file: {err}")
+            }
             SaveError::Replace { path, err, .. } => {
                 write!(f, "error: cannot replace {}: {}", path.display(), err)
             }
@@ -340,11 +334,11 @@ impl std::fmt::Display for PrimitiveError {
 impl std::error::Error for PrimitiveError {}
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /* Exclusive private directory for one test, removed by the caller. */
-    fn make_temp_dir(tag: &str) -> PathBuf {
+    pub fn make_temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("oldvim-unit-{}-{}", std::process::id(), tag));
         std::fs::create_dir(&dir).expect("cannot create a temporary directory");
         dir
@@ -402,7 +396,7 @@ mod tests {
         assert_eq!(ef.len(), 6);
         assert_eq!(ef.data(), b"hello\n");
         assert_eq!(ef.mode(), 0o640);
-        assert!(ef.exist());
+        assert!(ef.exist);
 
         std::fs::remove_file(&path).unwrap();
         std::fs::remove_dir(&dir).unwrap();
@@ -416,10 +410,9 @@ mod tests {
         let ef = EditorFile::open(&owned(&path)).unwrap();
 
         assert_eq!(ef.len(), 0);
-        assert!(ef.is_empty());
-        assert!(!ef.exist());
+        assert!(ef.data().is_empty());
+        assert!(!ef.exist);
         assert_eq!(ef.mode(), DEFAULT_FILE_MODE);
-        assert_eq!(ef.path(), Path::new(&dir).join("new.txt"));
 
         std::fs::remove_dir(&dir).unwrap(); /* nothing was created yet */
     }
@@ -450,8 +443,8 @@ mod tests {
         let missing = dir.join("no-such-dir/file.txt");
         let ef = EditorFile::open(&owned(&missing)).unwrap();
 
-        assert!(!ef.exist());
-        assert!(ef.is_empty());
+        assert!(!ef.exist);
+        assert!(ef.data().is_empty());
 
         std::fs::remove_file(&blocker).unwrap();
         std::fs::remove_dir(&dir).unwrap();
@@ -524,7 +517,7 @@ mod tests {
 
         assert_eq!(read_file(&path), b"hello\n!");
         assert_eq!(file_mode(&path), 0o640);
-        assert!(ef.exist());
+        assert!(ef.exist);
 
         /* The temporary file never lingers on success. */
         let mut leftovers: Vec<String> = std::fs::read_dir(&dir)
@@ -550,7 +543,7 @@ mod tests {
         ef.insert(0, b"hi").unwrap();
         ef.save().unwrap();
 
-        assert!(ef.exist());
+        assert!(ef.exist);
         assert_eq!(read_file(&path), b"hi");
         assert_eq!(file_mode(&path), 0o644);
 

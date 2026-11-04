@@ -19,7 +19,6 @@ pub struct Editor {
 /// message text of the underlying file layer.
 #[derive(Debug)]
 pub enum EditorError {
-    Open(OpenError),
     Save(SaveError),
     Buffer(PrimitiveError),
 }
@@ -27,7 +26,6 @@ pub enum EditorError {
 impl std::fmt::Display for EditorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EditorError::Open(err) => write!(f, "{err}"),
             EditorError::Save(err) => write!(f, "{err}"),
             EditorError::Buffer(err) => write!(f, "{err}"),
         }
@@ -479,7 +477,7 @@ mod tests {
 
         assert_eq!(action, EditorAction::Quit);
         assert_eq!(change, EditorChange::None);
-        assert!(ed.file.is_empty());
+        assert_eq!(ed.file.len(), 0);
     }
 
     #[test]
