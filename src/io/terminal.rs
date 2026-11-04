@@ -111,12 +111,9 @@ impl RawMode {
             return Ok(());
         }
 
-        let mut saved: Box<libc::termios> =
-            unsafe { std::mem::zeroed() };
+        let mut saved: libc::termios = unsafe { std::mem::zeroed() };
 
-        let rc = unsafe {
-            libc::tcgetattr(libc::STDIN_FILENO, &mut *saved)
-        };
+        let rc = unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut saved) };
 
         if rc == -1 {
             return Err(TerminalError::GetAttributes(io::Error::last_os_error()));
@@ -124,8 +121,8 @@ impl RawMode {
 
         /* The saved configuration goes where the signal handlers will
          * find it before the non-standard settings are attempted. */
-        let mut raw = *saved;
-        SAVED_TERMIOS.store(Box::into_raw(saved), Ordering::Relaxed);
+        let mut raw = saved;
+        SAVED_TERMIOS.store(Box::into_raw(Box::new(saved)), Ordering::Relaxed);
 
         install_signal_handlers();
 
