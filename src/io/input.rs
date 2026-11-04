@@ -27,6 +27,7 @@ pub enum Key {
 /// Escape byte that introduces a terminal key sequence.
 const ESC: u8 = 0x1b;
 const CTRL_H: u8 = 0x08;
+const KEY_BACKSPACE: u8 = 0x7f;
 const CTRL_S: u8 = 0x13;
 const CTRL_D: u8 = 0x04;
 
@@ -43,8 +44,9 @@ pub fn scan_from<R: Read>(input: &mut R) -> io::Result<Option<Key>> {
     };
 
     match byte {
-        /* Like the original: backspace is Ctrl+H or the erase key. */
-        CTRL_H => Ok(Some(Key::Backspace)),
+        /* Like the original: backspace is the erase key or Ctrl+H; the
+         * editors sees one key for both. */
+        CTRL_H | KEY_BACKSPACE => Ok(Some(Key::Backspace)),
         CTRL_S => Ok(Some(Key::CtrlS)),
         CTRL_D => Ok(Some(Key::CtrlD)),
         ESC => decode_escape(input),
@@ -108,7 +110,7 @@ mod tests {
         assert_eq!(scan(b"\x13"), Some(Key::CtrlS));
         /* Both erase inputs collapse onto one key. */
         assert_eq!(scan(b"\x08"), Some(Key::Backspace));
-        assert_eq!(scan(b"\x7f"), Some(Key::Byte(0x7f)));
+        assert_eq!(scan(b"\x7f"), Some(Key::Backspace));
     }
 
     #[test]

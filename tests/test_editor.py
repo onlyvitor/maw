@@ -8,7 +8,11 @@ import sys
 import tempfile
 import time
 
-BIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "oldvim")
+# OLDVIM_BIN points the suite at another build, e.g. the Rust port.
+BIN = os.environ.get(
+    "OLDVIM_BIN",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "oldvim"),
+)
 
 UP = b"\x1b[A"
 DOWN = b"\x1b[B"
