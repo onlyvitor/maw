@@ -119,6 +119,18 @@ impl EditorFile {
         self.exist
     }
 
+    /* Test constructor: a private buffer with a fixed path, without
+     * touching the file system. */
+    #[cfg(test)]
+    pub fn from_parts_for_tests(path: &str, data: &[u8]) -> EditorFile {
+        EditorFile {
+            path: PathBuf::from(path),
+            data: data.to_vec(),
+            mode: 0o644,
+            exist: false,
+        }
+    }
+
     /* Put bytes at pos, shifting the tail to the right. Error ranges and
      * messages mirror insert_bytes in the original file layer. */
     pub fn insert(&mut self, pos: usize, bytes: &[u8]) -> Result<(), PrimitiveError> {
