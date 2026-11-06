@@ -107,8 +107,9 @@ main(argc)
   equivalent.
 - Saving uses the path string, not a handle: the file's directory must
   still exist at save time; saving across a moved parent is best-effort.
-- No scroll, no windowing, no status line, no undo, no modes. This is the
-  feature set by design (see Feature Inventory).
+- The original had no scroll, no windowing, no status line, no
+  horizontal scrolling and no undo. Windowing and vertical scroll were
+  added after parity (see §8); the rest remains out of scope.
 
 ---
 
@@ -204,6 +205,26 @@ main(argc)
     work. `cargo clippy`/`cargo fmt` subcommands are not installed on
     this machine — noted as environment gap; code style kept
     `rustfmt`-conventional by hand.
+11. **Viewport model** (`src/io/viewport.rs`): a pure struct holding
+    `top_row` and the terminal `Size`. `ensure_visible(row)` scrolls by
+    the least amount that puts the cursor on screen and reports whether
+    the window moved. The renderer owns all escape codes; the model has
+    no I/O.
+12. **Geometry** is queried with `ioctl(TIOCGWINSZ)` on stdout before
+    the first draw and on every interactive key; the last cell of each
+    row is left free so a full row never parks the terminal in the
+    wrap-pending state. A zero-sized or non-tty report falls back to
+    80x24. Resize handling therefore needs no SIGWINCH machinery.
+13. **Alternate screen**: `RawMode` enters `\x1b[?1049h` after the raw
+    attributes are applied and leaves it after restoring them; the
+    signal handler writes the leave sequence too (`write(2)` is
+    async-signal-safe). The `[EOF]` message is printed only after the
+    normal screen is back.
+14. **Incremental repaint**: typing echoes the byte while it fits,
+    backspace and mid-line insert repaint from the affected row to the
+    bottom of the window, cursor motion emits one absolute cursor
+    position, and only a scroll, a resize or a newline repaints the
+    whole window.
 
 ## 5. Migration Roadmap
 
@@ -236,6 +257,16 @@ Phase 4 — documentation
 - [x] `docs: describe building and running the Rust editor`
 - [ ] (done) C sources removed from the working tree once the port was verified;
       the original is preserved at the `c-original` tag and throughout history.
+
+Phase 5 — windowing (post-parity feature, §8)
+- [x] `feat: add a pure viewport model`
+- [x] `feat: query the terminal size with TIOCGWINSZ`
+- [x] `feat: render only the visible viewport on startup`
+- [x] `feat: scroll the viewport to follow the cursor`
+- [x] `feat: repaint only the regions a key disturbed`
+- [x] `feat: repaint when the terminal is resized`
+- [x] `feat: use the alternate screen while editing`
+- [x] `test: cover scrolling, clipping, resize and the alternate screen`
 
 ## 6. Risk register
 
@@ -273,3 +304,30 @@ Phase 4 — documentation
    machine (`rustc 1.85.1` from source tarball), so `cargo check` +
    `cargo test` are the verified gates; the remaining checks should run
    where the components are available.
+
+## 8. Post-parity windowing (beyond the C original)
+
+The C implementation printed the whole file and relied on the terminal
+scrollback; every render covered the remainder of the buffer from the
+affected line. The Rust version keeps the same byte-oriented editing
+model but adds a window:
+
+- A logical line always occupies one screen row. Rows wider than the
+  terminal (`columns - 1` usable cells) are clipped, and the cursor
+  column is clamped to the last usable cell. Horizontal scrolling is
+  the next obvious feature.
+- Startup opens with the cursor at the end of the buffer, scrolled so
+  that row is visible.
+- `Viewport::ensure_visible` scrolls the least amount needed. A scroll
+  or a geometry change repaints every row; typing, backspace and cursor
+  motion stay incremental.
+- Geometry comes from `ioctl(TIOCGWINSZ)`; a resize is picked up on the
+  next key press instead of through SIGWINCH. SIGWINCH would only
+  shorten the repaint latency, not change correctness.
+- The editor runs on the alternate screen, so the shell scrollback is
+  untouched. The leave sequence is written both by `RawMode::disable`
+  and by the fatal-signal handler.
+- The pty suite pins a 24x80 window with `TIOCSWINSZ` (the 80x24
+  fallback still covers zero-sized reports) and inspects the stream
+  since the last `ESC[H`, i.e. the last full frame, to assert what the
+  screen shows after scrolling, clipping and resizing.
