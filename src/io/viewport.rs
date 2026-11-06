@@ -3,8 +3,6 @@
 // row; the renderer clips it to the terminal width. This module is a
 // pure model with no I/O and no escape codes.
 
-use std::ops::Range;
-
 /// Terminal geometry in cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Size {
@@ -82,14 +80,9 @@ impl Viewport {
     }
 
     /// Screen row (0-based) where a buffer row lands. Only meaningful
-    /// for rows inside `visible_rows`.
+    /// for rows inside the visible window.
     pub fn screen_row(&self, row: usize) -> usize {
         row - self.top_row
-    }
-
-    /// Buffer rows currently on screen.
-    pub fn visible_rows(&self) -> Range<usize> {
-        self.top_row..self.top_row + self.size.rows
     }
 }
 
@@ -106,7 +99,7 @@ mod tests {
         let vp = viewport(24, 80);
 
         assert_eq!(vp.top_row(), 0);
-        assert_eq!(vp.visible_rows(), 0..24);
+        assert_eq!(vp.screen_row(0), 0);
     }
 
     #[test]
@@ -130,11 +123,11 @@ mod tests {
         /* Rows 0..9 are visible; row 10 forces one row of scroll. */
         assert!(vp.ensure_visible(10));
         assert_eq!(vp.top_row(), 1);
-        assert_eq!(vp.visible_rows(), 1..11);
+        assert_eq!(vp.screen_row(10), 9);
 
         assert!(vp.ensure_visible(30));
         assert_eq!(vp.top_row(), 21);
-        assert_eq!(vp.visible_rows(), 21..31);
+        assert_eq!(vp.screen_row(30), 9);
     }
 
     #[test]
@@ -144,7 +137,8 @@ mod tests {
 
         assert!(vp.ensure_visible(5));
         assert_eq!(vp.top_row(), 5);
-        assert_eq!(vp.visible_rows(), 5..15);
+        assert_eq!(vp.screen_row(5), 0);
+        assert_eq!(vp.screen_row(14), 9);
     }
 
     #[test]
