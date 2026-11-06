@@ -4,3 +4,4 @@ target
 *.tmp.*
 text.rst
 tests/unit_tests
+__pycache__/
