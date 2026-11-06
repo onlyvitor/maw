@@ -85,7 +85,13 @@ pub fn screen_draw(ed: &Editor, viewport: &Viewport) -> io::Result<()> {
     out.flush()
 }
 
-/* Repaint whatever the key dispatch reported for this editor state. */
-pub fn apply_change(ed: &Editor, viewport: &Viewport, _change: EditorChange) -> io::Result<()> {
+/* Scroll to keep the cursor on screen, then repaint whatever the key
+ * dispatch reported for this editor state. */
+pub fn apply_change(
+    ed: &Editor,
+    viewport: &mut Viewport,
+    _change: EditorChange,
+) -> io::Result<()> {
+    viewport.ensure_visible(row_column(&ed.file, ed.cursor).0);
     screen_draw(ed, viewport)
 }

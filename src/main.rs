@@ -78,7 +78,7 @@ fn main() -> ExitCode {
                 Ok(EditorAction::Quit) => break,
                 Ok(EditorAction::Continue) => {
                     if interactive {
-                        if let Err(err) = output::apply_change(&ed, &viewport, change) {
+                        if let Err(err) = output::apply_change(&ed, &mut viewport, change) {
                             eprintln!("error: cannot draw the change: {err}");
                             status = 1;
                             break;
