@@ -349,6 +349,20 @@ static void test_size_clamps_and_content_width(void)
     CHECK_SIZE(fallback.columns, 80);
 }
 
+static void test_size_viewport_reserves_the_status_line(void)
+{
+    /* One screen row fewer, so the buffer never paints over the
+     * status line. */
+    Size window = size_viewport(size_fallback());
+
+    CHECK_SIZE(window.rows, 23);
+    CHECK_SIZE(window.columns, 80);
+
+    Size minimal = size_viewport(size_new(1, 80));
+
+    CHECK_SIZE(minimal.rows, 1);
+}
+
 /* ------------------------------------------------------------------ */
 /* movement                                                            */
 /* ------------------------------------------------------------------ */
@@ -710,6 +724,7 @@ int main(void)
     test_ensure_visible_scrolls_up_to_the_cursor();
     test_resize_only_reports_real_changes();
     test_size_clamps_and_content_width();
+    test_size_viewport_reserves_the_status_line();
 
     test_move_left();
     test_move_right();

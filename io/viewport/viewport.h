@@ -21,6 +21,10 @@ Size size_new(size_t rows, size_t columns);
  * so a full row never parks the terminal in the wrap-pending state. */
 size_t size_content_width(Size size);
 
+/* The window the buffer is drawn in for a given screen geometry: the
+ * last screen row is reserved for the status line. */
+Size size_viewport(Size screen);
+
 /* The visible slice of the buffer. top_row is the first buffer row
  * drawn at the top of the screen. A logical line always occupies
  * exactly one screen row; the renderer clips it to the terminal

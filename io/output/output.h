@@ -9,8 +9,9 @@
 /*
  * Screen output for a viewport: the editor reports what changed, this
  * module owns the escape codes and the screen geometry. Only the
- * visible rows of the buffer are ever written. The functions return 0
- * on success and -1 when writing to stdout fails.
+ * visible rows of the buffer are ever written, and the last screen
+ * row hosts the status line. The functions return 0 on success and
+ * -1 when writing to stdout fails.
  */
 
 int screen_puts(const char *s);
@@ -30,11 +31,12 @@ int screen_erase_line(void);
 /* Erase from the cursor to the bottom of the screen. */
 int screen_erase_below(void);
 
-/* Repaint every visible row and put the cursor back on screen. */
-int screen_draw(const EditorFile *ef, size_t cursor, const Viewport *vp);
+/* Repaint every visible row and the status line, then put the cursor
+ * back on screen. */
+int screen_draw(const Editor *ed, const Viewport *vp);
 
 /* Repaint whatever editor_handle_key reported. */
-int screen_apply_change(const EditorFile *ef, size_t cursor, Viewport *vp, Size size,
+int screen_apply_change(const Editor *ed, Viewport *vp, Size size,
                         const EditorChange *change);
 
 #endif

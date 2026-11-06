@@ -24,6 +24,16 @@ size_t size_content_width(Size size)
     return size.columns - 1;
 }
 
+Size size_viewport(Size screen)
+{
+    if (screen.rows > 1)
+    {
+        screen.rows--;
+    }
+
+    return screen;
+}
+
 Viewport viewport_new(Size size)
 {
     Viewport vp = {0, size};

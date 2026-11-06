@@ -32,7 +32,7 @@ int main(int argc, char **argv)
     bool interactive = isatty(STDIN_FILENO) != 0;
     int status = 0;
     bool eof = false;
-    Viewport vp = viewport_new(terminal_size());
+    Viewport vp = viewport_new(size_viewport(terminal_size()));
 
     if (interactive)
     {
@@ -42,7 +42,7 @@ int main(int argc, char **argv)
         editor_row_column(ed->file, ed->cursor, &cursor_row, &column);
         viewport_ensure_visible(&vp, cursor_row);
 
-        if (screen_draw(ed->file, ed->cursor, &vp) != 0)
+        if (screen_draw(ed, &vp) != 0)
         {
             fprintf(stderr, "error: cannot draw the file\n");
             status = 1;
@@ -83,7 +83,7 @@ int main(int argc, char **argv)
         }
 
         if (interactive &&
-            screen_apply_change(ed->file, ed->cursor, &vp, terminal_size(), &change) != 0)
+            screen_apply_change(ed, &vp, terminal_size(), &change) != 0)
         {
             fprintf(stderr, "error: cannot draw the change\n");
             status = 1;

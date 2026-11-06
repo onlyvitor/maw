@@ -210,7 +210,7 @@ def test_scrolls_back_down_to_the_last_line(tmp):
 def test_typing_past_the_bottom_scrolls_the_window(tmp):
     case = Case(tmp)
     path = case.write(
-        "full.txt", b"".join(f"L{i:02d}\n".encode() for i in range(23))
+        "full.txt", b"".join(f"L{i:02d}\n".encode() for i in range(22))
     )
     session = Session(path)
 
@@ -244,8 +244,27 @@ def test_resizing_repaints_the_window(tmp):
     set_winsize(session.fd, 10, 40)
     frame = last_frame(session.send(SAVE))
 
-    assert b"L21" in frame, "the smaller window follows the cursor"
-    assert b"L20" not in frame, "rows above the new window are not drawn"
+    assert b"L22" in frame, "the smaller window follows the cursor"
+    assert b"L21" not in frame, "rows above the new window are not drawn"
+    session.quit()
+
+
+def test_the_status_line_reports_the_state(tmp):
+    case = Case(tmp)
+    path = case.write("stat.txt", b"")
+    session = Session(path)
+
+    # Typing refreshes the status line: file name, the marker for
+    # pending edits and the 1-based cursor position.
+    tail = session.send(b"X").rsplit(b"\x1b[7m", 1)[-1]
+
+    assert b"stat.txt *" in tail, "the status shows pending edits"
+    assert b"1,2" in tail, "the status shows the cursor position"
+
+    # Saving clears the dirty flag and the marker goes with it.
+    tail = session.send(SAVE).rsplit(b"\x1b[7m", 1)[-1]
+
+    assert b"*" not in tail, "the marker clears once the file is saved"
     session.quit()
 
 
@@ -302,6 +321,7 @@ def main():
         test_typing_past_the_bottom_scrolls_the_window,
         test_clips_lines_wider_than_the_screen,
         test_resizing_repaints_the_window,
+        test_the_status_line_reports_the_state,
         test_uses_the_alternate_screen,
         test_create_new_file,
         test_save_then_keep_editing,

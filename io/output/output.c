@@ -1,6 +1,7 @@
 #include "output.h"
 
 #include <stdio.h>
+#include <string.h>
 
 int screen_puts(const char *s)
 {
@@ -79,11 +80,11 @@ static int write_clipped_line(const char *limit, const char *start, size_t width
 
 /* Put the terminal cursor where the editor cursor is. The viewport has
  * already been scrolled to keep that row visible. */
-static int position_cursor(const EditorFile *ef, size_t cursor, const Viewport *vp)
+static int position_cursor(const Editor *ed, const Viewport *vp)
 {
     size_t row, column;
 
-    editor_row_column(ef, cursor, &row, &column);
+    editor_row_column(ed->file, ed->cursor, &row, &column);
 
     size_t screen_row = row >= vp->top_row ? row - vp->top_row : 0;
 
@@ -105,10 +106,63 @@ static int position_cursor(const EditorFile *ef, size_t cursor, const Viewport *
     return screen_goto_position(screen_row, screen_column);
 }
 
-/* Repaint every visible row and put the cursor back on screen. */
-int screen_draw(const EditorFile *ef, size_t cursor, const Viewport *vp)
+/* Paint the status line. It states where the editing is: the file
+ * name, a marker for pending edits and the 1-based cursor position,
+ * in reverse video. */
+static int write_status(const Editor *ed, const Viewport *vp)
 {
-    const char *limit = ef->data + ef->len;
+    size_t width = size_content_width(viewport_size(vp));
+
+    size_t row, column;
+
+    editor_row_column(ed->file, ed->cursor, &row, &column);
+
+    char text[1024];
+
+    int written = snprintf(text, sizeof text, "%s%s %zu,%zu", ed->file->path,
+                           ed->dirty ? " *" : "", row + 1, column + 1);
+
+    if (written < 0)
+    {
+        return -1;
+    }
+
+    size_t len = (size_t)written < sizeof text - 1 ? (size_t)written : sizeof text - 1;
+
+    if (len > width)
+    {
+        len = width;
+    }
+
+    if (screen_goto_position(viewport_size(vp).rows, 0) != 0 ||
+        screen_erase_line() != 0)
+    {
+        return -1;
+    }
+
+    if (screen_puts("\033[7m") != 0 || screen_write(text, len) != 0 ||
+        screen_puts("\033[0m") != 0)
+    {
+        return -1;
+    }
+
+    return 0;
+}
+
+/* Bring the status line up to date and put the cursor back. */
+static int refresh_status(const Editor *ed, const Viewport *vp)
+{
+    if (write_status(ed, vp) != 0 || position_cursor(ed, vp) != 0)
+    {
+        return -1;
+    }
+
+    return screen_flush();
+}
+
+int screen_draw(const Editor *ed, const Viewport *vp)
+{
+    const char *limit = ed->file->data + ed->file->len;
     size_t width = size_content_width(viewport_size(vp));
     size_t rows = viewport_size(vp).rows;
 
@@ -117,7 +171,7 @@ int screen_draw(const EditorFile *ef, size_t cursor, const Viewport *vp)
         return -1;
     }
 
-    const char *offset = offset_of_row(ef->data, ef->len, vp->top_row);
+    const char *offset = offset_of_row(ed->file->data, ed->file->len, vp->top_row);
 
     for (size_t screen_row = 0; screen_row < rows; screen_row++)
     {
@@ -137,7 +191,12 @@ int screen_draw(const EditorFile *ef, size_t cursor, const Viewport *vp)
         }
     }
 
-    if (position_cursor(ef, cursor, vp) != 0)
+    if (write_status(ed, vp) != 0)
+    {
+        return -1;
+    }
+
+    if (position_cursor(ed, vp) != 0)
     {
         return -1;
     }
@@ -146,16 +205,16 @@ int screen_draw(const EditorFile *ef, size_t cursor, const Viewport *vp)
 }
 
 /* Repaint from the row that contains start down to the bottom of the
- * viewport, then put the cursor back. */
-static int redraw_from(const EditorFile *ef, size_t cursor, const Viewport *vp, size_t start)
+ * viewport, status line included, then put the cursor back. */
+static int redraw_from(const Editor *ed, const Viewport *vp, size_t start)
 {
-    const char *limit = ef->data + ef->len;
+    const char *limit = ed->file->data + ed->file->len;
     size_t width = size_content_width(viewport_size(vp));
     size_t rows = viewport_size(vp).rows;
 
     size_t start_row, column;
 
-    editor_row_column(ef, start, &start_row, &column);
+    editor_row_column(ed->file, start, &start_row, &column);
 
     size_t first_screen_row = start_row - vp->top_row;
 
@@ -165,7 +224,7 @@ static int redraw_from(const EditorFile *ef, size_t cursor, const Viewport *vp, 
         return -1;
     }
 
-    const char *offset = ef->data + start;
+    const char *offset = ed->file->data + start;
 
     for (size_t screen_row = first_screen_row; screen_row < rows; screen_row++)
     {
@@ -190,7 +249,13 @@ static int redraw_from(const EditorFile *ef, size_t cursor, const Viewport *vp, 
         offset = next;
     }
 
-    if (position_cursor(ef, cursor, vp) != 0)
+    /* The erase-below reached the status line, so repaint it too. */
+    if (write_status(ed, vp) != 0)
+    {
+        return -1;
+    }
+
+    if (position_cursor(ed, vp) != 0)
     {
         return -1;
     }
@@ -198,71 +263,75 @@ static int redraw_from(const EditorFile *ef, size_t cursor, const Viewport *vp, 
     return screen_flush();
 }
 
-/* The cursor moved without changing the buffer. */
-static int move_cursor(const EditorFile *ef, size_t cursor, const Viewport *vp)
+/* The cursor moved without changing the buffer: the status text has
+ * to name the new position. */
+static int move_cursor(const Editor *ed, const Viewport *vp)
 {
-    if (position_cursor(ef, cursor, vp) != 0)
-    {
-        return -1;
-    }
-
-    return screen_flush();
+    return refresh_status(ed, vp);
 }
 
 /* A byte was appended at the end of the buffer. Echo it in place while
  * it fits on screen; the newline and the clipped tail repaint the row. */
-static int append_byte(const EditorFile *ef, size_t cursor, const Viewport *vp, char byte)
+static int append_byte(const Editor *ed, const Viewport *vp, char byte)
 {
     size_t row, column;
 
-    editor_row_column(ef, cursor, &row, &column);
+    editor_row_column(ed->file, ed->cursor, &row, &column);
 
     if (byte == '\n' || column > size_content_width(viewport_size(vp)))
     {
-        return redraw_from(ef, cursor, vp, line_start_index(ef->data, cursor));
+        return redraw_from(ed, vp, line_start_index(ed->file->data, ed->cursor));
     }
 
-    return screen_putc(byte) != 0 || screen_flush() != 0 ? -1 : 0;
+    if (screen_putc(byte) != 0)
+    {
+        return -1;
+    }
+
+    /* The echoed byte moved the cursor, so the position on the status
+     * line has moved too. */
+    return refresh_status(ed, vp);
 }
 
 /* Repaint whatever the key dispatch reported for this editor state. */
-int screen_apply_change(const EditorFile *ef, size_t cursor, Viewport *vp, Size size,
+int screen_apply_change(const Editor *ed, Viewport *vp, Size size,
                         const EditorChange *change)
 {
     size_t row, column;
 
-    editor_row_column(ef, cursor, &row, &column);
+    editor_row_column(ed->file, ed->cursor, &row, &column);
 
     /* A new geometry invalidates every row, so repaint the whole
      * window and make sure the cursor is still in it. */
-    if (viewport_resize(vp, size))
+    if (viewport_resize(vp, size_viewport(size)))
     {
         viewport_ensure_visible(vp, row);
 
-        return screen_draw(ef, cursor, vp);
+        return screen_draw(ed, vp);
     }
 
     /* Scrolling invalidates every row as well. */
     if (viewport_ensure_visible(vp, row))
     {
-        return screen_draw(ef, cursor, vp);
+        return screen_draw(ed, vp);
     }
 
     switch (change->kind)
     {
     case CHANGE_NONE:
-        return 0;
+        /* Ctrl+S clears the dirty flag: the status marker goes too. */
+        return refresh_status(ed, vp);
     case CHANGE_CURSOR:
         if (change->motion == CURSOR_MOTION_NONE)
         {
-            return 0;
+            return refresh_status(ed, vp);
         }
 
-        return move_cursor(ef, cursor, vp);
+        return move_cursor(ed, vp);
     case CHANGE_LINE:
-        return redraw_from(ef, cursor, vp, change->start);
+        return redraw_from(ed, vp, change->start);
     case CHANGE_APPEND:
-        return append_byte(ef, cursor, vp, change->byte);
+        return append_byte(ed, vp, change->byte);
     }
 
     return -1;
