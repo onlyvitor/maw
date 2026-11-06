@@ -30,7 +30,7 @@ UNIT_SRC := tests/unit_test.c \
             src/viewport/viewport.c
 
 UNIT_BIN := tests/unit_tests
-TARGET := oldvim
+TARGET := maw
 
 INPUT := text.rst
 
