@@ -145,17 +145,111 @@ int screen_draw(const EditorFile *ef, size_t cursor, const Viewport *vp)
     return screen_flush();
 }
 
-/* Scroll to keep the cursor on screen, then repaint whatever the key
- * dispatch reported for this editor state. */
-int screen_apply_change(const EditorFile *ef, size_t cursor, Viewport *vp,
-                        const EditorChange *change)
+/* Repaint from the row that contains start down to the bottom of the
+ * viewport, then put the cursor back. */
+static int redraw_from(const EditorFile *ef, size_t cursor, const Viewport *vp, size_t start)
 {
-    (void)change;
+    const char *limit = ef->data + ef->len;
+    size_t width = size_content_width(viewport_size(vp));
+    size_t rows = viewport_size(vp).rows;
 
+    size_t start_row, column;
+
+    editor_row_column(ef, start, &start_row, &column);
+
+    size_t first_screen_row = start_row - vp->top_row;
+
+    /* Move to the beginning of the affected row and erase below it. */
+    if (screen_goto_position(first_screen_row, 0) != 0 || screen_erase_below() != 0)
+    {
+        return -1;
+    }
+
+    const char *offset = ef->data + start;
+
+    for (size_t screen_row = first_screen_row; screen_row < rows; screen_row++)
+    {
+        if (screen_row > first_screen_row && screen_puts("\r\n") != 0)
+        {
+            return -1;
+        }
+
+        if (offset < limit && write_clipped_line(limit, offset, width, &offset) != 0)
+        {
+            return -1;
+        }
+
+        if (offset == NULL)
+        {
+            break;
+        }
+    }
+
+    if (position_cursor(ef, cursor, vp) != 0)
+    {
+        return -1;
+    }
+
+    return screen_flush();
+}
+
+/* The cursor moved without changing the buffer. */
+static int move_cursor(const EditorFile *ef, size_t cursor, const Viewport *vp)
+{
+    if (position_cursor(ef, cursor, vp) != 0)
+    {
+        return -1;
+    }
+
+    return screen_flush();
+}
+
+/* A byte was appended at the end of the buffer. Echo it in place while
+ * it fits on screen; the newline and the clipped tail repaint the row. */
+static int append_byte(const EditorFile *ef, size_t cursor, const Viewport *vp, char byte)
+{
     size_t row, column;
 
     editor_row_column(ef, cursor, &row, &column);
-    viewport_ensure_visible(vp, row);
 
-    return screen_draw(ef, cursor, vp);
+    if (byte == '\n' || column > size_content_width(viewport_size(vp)))
+    {
+        return redraw_from(ef, cursor, vp, line_start_index(ef->data, cursor));
+    }
+
+    return screen_putc(byte) != 0 || screen_flush() != 0 ? -1 : 0;
+}
+
+/* Repaint whatever the key dispatch reported for this editor state. */
+int screen_apply_change(const EditorFile *ef, size_t cursor, Viewport *vp,
+                        const EditorChange *change)
+{
+    size_t row, column;
+
+    editor_row_column(ef, cursor, &row, &column);
+
+    /* Scrolling invalidates every row. */
+    if (viewport_ensure_visible(vp, row))
+    {
+        return screen_draw(ef, cursor, vp);
+    }
+
+    switch (change->kind)
+    {
+    case CHANGE_NONE:
+        return 0;
+    case CHANGE_CURSOR:
+        if (change->motion == CURSOR_MOTION_NONE)
+        {
+            return 0;
+        }
+
+        return move_cursor(ef, cursor, vp);
+    case CHANGE_LINE:
+        return redraw_from(ef, cursor, vp, change->start);
+    case CHANGE_APPEND:
+        return append_byte(ef, cursor, vp, change->byte);
+    }
+
+    return -1;
 }
