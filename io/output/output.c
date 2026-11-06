@@ -145,21 +145,17 @@ int screen_draw(const EditorFile *ef, size_t cursor, const Viewport *vp)
     return screen_flush();
 }
 
-/* Repaint whatever editor_handle_key reported. */
+/* Scroll to keep the cursor on screen, then repaint whatever the key
+ * dispatch reported for this editor state. */
 int screen_apply_change(const EditorFile *ef, size_t cursor, Viewport *vp,
                         const EditorChange *change)
 {
-    (void)vp;
+    (void)change;
 
-    switch (change->kind)
-    {
-    case CHANGE_NONE:
-        return 0;
-    case CHANGE_CURSOR:
-    case CHANGE_LINE:
-    case CHANGE_APPEND:
-        return screen_draw(ef, cursor, vp);
-    }
+    size_t row, column;
 
-    return -1;
+    editor_row_column(ef, cursor, &row, &column);
+    viewport_ensure_visible(vp, row);
+
+    return screen_draw(ef, cursor, vp);
 }
