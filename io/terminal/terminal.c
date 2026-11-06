@@ -13,12 +13,27 @@
 static struct termios saved_termios;
 static volatile sig_atomic_t rawmode_enabled = 0;
 
+/* Enter the alternate screen and clear it; leave it on the way out so
+ * the shell history stays untouched. */
+static const char enter_screen[] = "\033[?1049h\033[H\033[2J";
+static const char leave_screen[] = "\033[?1049l";
+
+/* Write one of the screen switches above (and its flush) to stdout. */
+static int write_screen(const char *sequence)
+{
+    return fputs(sequence, stdout) == EOF || fflush(stdout) == EOF ? -1 : 0;
+}
+
 static void handle_signal(int signum)
 {
     if (rawmode_enabled)
     {
-        /* tcsetattr and _exit are async-signal-safe */
+        /* tcsetattr, write and _exit are async-signal-safe */
         tcsetattr(STDIN_FILENO, TCSANOW, &saved_termios);
+
+        /* Leave the alternate screen even on a fatal signal, so the
+         * shell is usable afterwards. */
+        (void)write(STDOUT_FILENO, leave_screen, sizeof(leave_screen) - 1);
     }
 
     _exit(128 + signum);
@@ -86,10 +101,20 @@ int rawmode_on(void)
 
     rawmode_enabled = 1;
 
+    /* Do not leave the terminal raw if the screen switch fails. */
+    if (write_screen(enter_screen) != 0)
+    {
+        perror("error: cannot switch the screen");
+        tcsetattr(STDIN_FILENO, TCSANOW, &saved_termios);
+        rawmode_enabled = 0;
+
+        return -1;
+    }
+
     return 0;
 }
 
-// restore the default terminal configuration
+// restore the default terminal configuration and the normal screen
 int rawmode_off(void)
 {
     if (!rawmode_enabled)
@@ -99,11 +124,27 @@ int rawmode_off(void)
 
     if (tcsetattr(STDIN_FILENO, TCSANOW, &saved_termios) == -1)
     {
+        rawmode_enabled = 0;
         perror("error: cannot restore the terminal attributes");
+
+        /* Leave the alternate screen even when the attributes could
+         * not be restored, so the shell is usable either way. */
+        if (write_screen(leave_screen) != 0)
+        {
+            perror("error: cannot switch the screen");
+        }
+
         return -1;
     }
 
     rawmode_enabled = 0;
+
+    if (write_screen(leave_screen) != 0)
+    {
+        perror("error: cannot switch the screen");
+
+        return -1;
+    }
 
     return 0;
 }

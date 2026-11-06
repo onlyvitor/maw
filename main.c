@@ -31,6 +31,7 @@ int main(int argc, char **argv)
 
     bool interactive = isatty(STDIN_FILENO) != 0;
     int status = 0;
+    bool eof = false;
     Viewport vp = viewport_new(terminal_size());
 
     if (interactive)
@@ -60,7 +61,8 @@ int main(int argc, char **argv)
             }
             else
             {
-                printf("\n[EOF]\n");
+                /* Printed once the normal screen is back. */
+                eof = true;
             }
 
             break;
@@ -92,6 +94,11 @@ int main(int argc, char **argv)
     if (rawmode_off() != 0)
     {
         status = 1;
+    }
+
+    if (eof)
+    {
+        printf("\n[EOF]\n");
     }
 
     if (status == 0 && save_file(ed->file) != 0)
