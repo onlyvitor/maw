@@ -1,12 +1,34 @@
 CC := clang
-CFLAGS := -I. -std=c17 -Wall -Wextra -Werror
+CFLAGS := -I. -Isrc -std=c17 -Wall -Wextra -Werror
 DEBUG_FLAGS := -g
 RELEASE_FLAGS := -O2
 SANITIZE_FLAGS := -g -fsanitize=address,undefined
 
-SRC := $(wildcard *.c) $(wildcard io/*/*.c) $(wildcard fileio/*.c) $(wildcard editor/*.c)
-HEADERS := $(wildcard *.h) $(wildcard io/*/*.h) $(wildcard fileio/*.h) $(wildcard editor/*.h)
-UNIT_SRC := tests/unit_test.c io/viewport/viewport.c editor/editor.c fileio/fileio.c
+SRC := src/main.c \
+       src/buffer/buffer.c \
+       src/editor/editor.c \
+       src/editor/edit_ops.c \
+       src/fileio/fileio.c \
+       src/input/input.c \
+       src/terminal/terminal.c \
+       src/terminal/signals.c \
+       src/render/escape.c \
+       src/render/status.c \
+       src/render/render.c \
+       src/viewport/geometry.c \
+       src/viewport/viewport.c \
+       src/app/app.c
+
+HEADERS := $(wildcard src/**/*.h)
+
+UNIT_SRC := tests/unit_test.c \
+            src/buffer/buffer.c \
+            src/editor/editor.c \
+            src/editor/edit_ops.c \
+            src/fileio/fileio.c \
+            src/viewport/geometry.c \
+            src/viewport/viewport.c
+
 UNIT_BIN := tests/unit_tests
 TARGET := oldvim
 
