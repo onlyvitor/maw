@@ -174,15 +174,20 @@ static int redraw_from(const EditorFile *ef, size_t cursor, const Viewport *vp, 
             return -1;
         }
 
-        if (offset < limit && write_clipped_line(limit, offset, width, &offset) != 0)
+        if (offset == NULL)
+        {
+            /* The buffer ran out; the rows stay erased below. */
+            continue;
+        }
+
+        const char *next;
+
+        if (write_clipped_line(limit, offset, width, &next) != 0)
         {
             return -1;
         }
 
-        if (offset == NULL)
-        {
-            break;
-        }
+        offset = next;
     }
 
     if (position_cursor(ef, cursor, vp) != 0)
