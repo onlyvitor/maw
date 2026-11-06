@@ -10,10 +10,11 @@ use std::io::IsTerminal;
 use std::path::Path;
 use std::process::ExitCode;
 
-use crate::editor::{handle_key, Editor, EditorAction, EditorChange, EditorError};
+use crate::editor::{handle_key, row_column, Editor, EditorAction, EditorChange, EditorError};
 use crate::io::input::scan;
 use crate::io::output;
-use crate::io::terminal::RawMode;
+use crate::io::terminal::{self, RawMode};
+use crate::io::viewport::Viewport;
 
 fn main() -> ExitCode {
     let mut args = std::env::args();
@@ -42,9 +43,13 @@ fn main() -> ExitCode {
 
     let interactive = std::io::stdin().is_terminal();
     let mut status: u8 = 0;
+    let mut viewport = Viewport::new(terminal::size());
 
     if interactive {
-        if let Err(err) = output::screen_write(ed.file.data()) {
+        /* Start with the cursor (the end of the buffer) on screen. */
+        viewport.ensure_visible(row_column(&ed.file, ed.cursor).0);
+
+        if let Err(err) = output::screen_draw(&ed, &viewport) {
             eprintln!("error: cannot draw the file: {err}");
             status = 1;
         }
@@ -72,10 +77,12 @@ fn main() -> ExitCode {
                 }
                 Ok(EditorAction::Quit) => break,
                 Ok(EditorAction::Continue) => {
-                    if let Err(err) = output::apply_change(&ed, change) {
-                        eprintln!("error: cannot draw the change: {err}");
-                        status = 1;
-                        break;
+                    if interactive {
+                        if let Err(err) = output::apply_change(&ed, &viewport, change) {
+                            eprintln!("error: cannot draw the change: {err}");
+                            status = 1;
+                            break;
+                        }
                     }
                 }
             },

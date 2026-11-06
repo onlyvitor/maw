@@ -102,9 +102,30 @@ pub fn line_end_index(data: &[u8], len: usize, pos: usize) -> usize {
     end
 }
 
+/* First byte of the given 0-based row, or None past the last row. A
+ * trailing newline opens one more empty row at the end of the buffer. */
+pub fn offset_of_row(data: &[u8], row: usize) -> Option<usize> {
+    if row == 0 {
+        return Some(0);
+    }
+
+    let mut current = 0;
+
+    for (index, &byte) in data.iter().enumerate() {
+        if byte == b'\n' {
+            current += 1;
+
+            if current == row {
+                return Some(index + 1);
+            }
+        }
+    }
+
+    None
+}
+
 /* 0-based row and byte column of pos. */
-pub fn row_column(ef: &EditorFile, pos: usize) -> (usize, usize) {
-    let mut row = 0;
+pub fn row_column(ef: &EditorFile, pos: usize) -> (usize, usize) {    let mut row = 0;
 
     for &byte in &ef.data()[..pos] {
         if byte == b'\n' {
@@ -323,6 +344,20 @@ mod tests {
         assert_eq!(row_column(&ef, 0), (0, 0));
         assert_eq!(row_column(&ef, 6), (1, 2));
         assert_eq!(row_column(&ef, 8), (2, 0));
+    }
+
+    #[test]
+    fn offset_of_row_finds_line_starts() {
+        let data = b"abc\ndef\n";
+
+        assert_eq!(offset_of_row(data, 0), Some(0));
+        assert_eq!(offset_of_row(data, 1), Some(4));
+        assert_eq!(offset_of_row(data, 2), Some(8)); /* empty row after the newline */
+        assert_eq!(offset_of_row(data, 3), None);
+
+        assert_eq!(offset_of_row(b"", 0), Some(0));
+        assert_eq!(offset_of_row(b"", 1), None);
+        assert_eq!(offset_of_row(b"abc", 1), None);
     }
 
     /* ---------------------------------------------------------------- */

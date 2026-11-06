@@ -1,146 +1,91 @@
-// Screen output: minimal primitives plus change-driven rendering. The
-// editor reports what to repaint; this module produces the escape
-// codes. Every function reports write failures, never eats them — the
-// caller owns the printed messages.
+// Screen output for a viewport: the editor reports what changed, this
+// module owns the escape codes and the screen geometry. Only the
+// visible rows of the buffer are ever written.
 
 use std::io::{self, Write};
 
-use crate::editor::{line_start_index, row_column, CursorMotion, Editor, EditorChange};
-use crate::fileio::EditorFile;
+use crate::editor::{offset_of_row, row_column, Editor, EditorChange};
+use crate::io::viewport::Viewport;
 
-/* Move the cursor without touching the buffer. */
-fn goto_column<W: Write>(out: &mut W, column: usize) -> io::Result<()> {
-    if column == 0 {
-        return Ok(());
-    }
-
-    write!(out, "\x1b[{}C", column)
+/* Move to the top-left cell. */
+fn goto_origin<W: Write>(out: &mut W) -> io::Result<()> {
+    out.write_all(b"\x1b[H")
 }
 
-fn move_left<W: Write>(out: &mut W, columns: usize) -> io::Result<()> {
-    if columns == 0 {
-        return Ok(());
-    }
-
-    write!(out, "\x1b[{}D", columns)
+/* Put the cursor at a 0-based screen row and column. */
+fn goto_position<W: Write>(out: &mut W, row: usize, column: usize) -> io::Result<()> {
+    write!(out, "\x1b[{};{}H", row + 1, column + 1)
 }
 
-fn move_right<W: Write>(out: &mut W, columns: usize) -> io::Result<()> {
-    goto_column(out, columns)
+/* Erase the current line from the cursor to its end. */
+fn erase_line<W: Write>(out: &mut W) -> io::Result<()> {
+    out.write_all(b"\x1b[K")
 }
 
-fn move_up<W: Write>(out: &mut W, rows: usize) -> io::Result<()> {
-    if rows == 0 {
-        return Ok(());
-    }
-
-    write!(out, "\x1b[{}A", rows)
-}
-
-fn move_down<W: Write>(out: &mut W, rows: usize) -> io::Result<()> {
-    if rows == 0 {
-        return Ok(());
-    }
-
-    write!(out, "\x1b[{}B", rows)
-}
-
-fn carriage_return<W: Write>(out: &mut W) -> io::Result<()> {
-    out.write_all(b"\r")
-}
-
-/* Erase everything below the cursor. */
-fn erase_below<W: Write>(out: &mut W) -> io::Result<()> {
-    out.write_all(b"\x1b[J")
-}
-
-/* Print the whole buffer at startup and flush. */
-pub fn screen_write(data: &[u8]) -> io::Result<()> {
-    let mut out = io::stdout().lock();
-
-    out.write_all(data).and_then(|()| out.flush())
-}
-
-/* Draw the cursor motion that the editor reported. */
-pub fn apply_motion(ef: &EditorFile, cursor: usize, motion: CursorMotion) -> io::Result<()> {
-    let mut out = io::stdout().lock();
-
-    match motion {
-        CursorMotion::None => Ok(()),
-        CursorMotion::Left => move_left(&mut out, 1).and_then(|()| out.flush()),
-        CursorMotion::Right => move_right(&mut out, 1).and_then(|()| out.flush()),
-        CursorMotion::NextLine => out.write_all(b"\r\n").and_then(|()| out.flush()),
-        /* The line is one above; the landing column needs the buffer. */
-        CursorMotion::PreviousLine
-        | CursorMotion::Up
-        | CursorMotion::Down => carriage_return_or_column(&mut out, ef, cursor, motion),
-    }
-}
-
-fn carriage_return_or_column<W: Write>(
+/* Write one logical line clipped to `width` bytes and return the offset
+ * of the next line, or None when the buffer ends. */
+fn write_clipped_line<W: Write>(
     out: &mut W,
-    ef: &EditorFile,
-    cursor: usize,
-    motion: CursorMotion,
-) -> io::Result<()> {
-    match motion {
-        CursorMotion::Up | CursorMotion::PreviousLine => move_up(out, 1)?,
-        CursorMotion::Down => move_down(out, 1)?,
-        _ => {}
+    data: &[u8],
+    start: usize,
+    width: usize,
+) -> io::Result<Option<usize>> {
+    let len = data.len();
+    let mut end = start;
+
+    while end < len && data[end] != b'\n' && end - start < width {
+        end += 1;
     }
 
-    carriage_return(out)?;
-    goto_column(out, row_column(ef, cursor).1)?;
+    out.write_all(&data[start..end])?;
+
+    /* Skip whatever did not fit until the end of the line. */
+    let mut next = end;
+
+    while next < len && data[next] != b'\n' {
+        next += 1;
+    }
+
+    Ok(if next < len { Some(next + 1) } else { None })
+}
+
+/* Repaint every visible row and put the cursor back on screen. */
+pub fn screen_draw(ed: &Editor, viewport: &Viewport) -> io::Result<()> {
+    let mut out = io::stdout().lock();
+    let size = viewport.size();
+    let width = size.content_width();
+    let data = ed.file.data();
+
+    goto_origin(&mut out)?;
+
+    let mut offset = offset_of_row(data, viewport.top_row());
+
+    for screen_row in 0..size.rows {
+        if screen_row > 0 {
+            out.write_all(b"\r\n")?;
+        }
+
+        erase_line(&mut out)?;
+
+        if let Some(start) = offset {
+            offset = write_clipped_line(&mut out, data, start, width)?;
+        }
+    }
+
+    /* The cursor is always kept inside the painted window: editing
+     * paths call ensure_visible before drawing. Clamp anyway so an
+     * off-screen cursor cannot underflow the row arithmetic. */
+    let (cursor_row, cursor_column) = row_column(&ed.file, ed.cursor);
+    let screen_row = cursor_row
+        .saturating_sub(viewport.top_row())
+        .min(size.rows.saturating_sub(1));
+    let screen_column = cursor_column.min(width);
+
+    goto_position(&mut out, screen_row, screen_column)?;
     out.flush()
 }
 
-/* Redraw from the start of a line and put the cursor back at cursor. */
-pub fn redraw_from(ef: &EditorFile, start: usize, cursor: usize) -> io::Result<()> {
-    let data = ef.data();
-    let mut out = io::stdout().lock();
-
-    /* Move to the beginning of the line and erase everything below it. */
-    carriage_return(&mut out).and_then(|()| erase_below(&mut out))?;
-
-    out.write_all(&data[start..])?;
-
-    /* Count how many lines were printed after the cursor. */
-    let mut rows = 0;
-
-    for &byte in &data[cursor..] {
-        if byte == b'\n' {
-            rows += 1;
-        }
-    }
-
-    move_up(&mut out, rows).and_then(|()| carriage_return(&mut out))?;
-
-    /* Move right to the column where the cursor lives. */
-    let column = cursor - line_start_index(data, cursor);
-
-    goto_column(&mut out, column).and_then(|()| out.flush())
-}
-
 /* Repaint whatever the key dispatch reported for this editor state. */
-pub fn apply_change(ed: &Editor, change: EditorChange) -> io::Result<()> {
-    match change {
-        EditorChange::None => Ok(()),
-        EditorChange::Cursor(motion) => apply_motion(&ed.file, ed.cursor, motion),
-        EditorChange::Line { start, removed_newline } => {
-            let mut out = io::stdout().lock();
-
-            if removed_newline {
-                /* The cursor moved up a row with the joined lines. */
-                move_up(&mut out, 1)?;
-            }
-
-            drop(out);
-            redraw_from(&ed.file, start, ed.cursor)
-        }
-        EditorChange::Append { byte } => {
-            let mut out = io::stdout().lock();
-
-            out.write_all(&[byte]).and_then(|()| out.flush())
-        }
-    }
+pub fn apply_change(ed: &Editor, viewport: &Viewport, _change: EditorChange) -> io::Result<()> {
+    screen_draw(ed, viewport)
 }
