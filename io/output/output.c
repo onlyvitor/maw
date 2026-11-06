@@ -221,14 +221,23 @@ static int append_byte(const EditorFile *ef, size_t cursor, const Viewport *vp, 
 }
 
 /* Repaint whatever the key dispatch reported for this editor state. */
-int screen_apply_change(const EditorFile *ef, size_t cursor, Viewport *vp,
+int screen_apply_change(const EditorFile *ef, size_t cursor, Viewport *vp, Size size,
                         const EditorChange *change)
 {
     size_t row, column;
 
     editor_row_column(ef, cursor, &row, &column);
 
-    /* Scrolling invalidates every row. */
+    /* A new geometry invalidates every row, so repaint the whole
+     * window and make sure the cursor is still in it. */
+    if (viewport_resize(vp, size))
+    {
+        viewport_ensure_visible(vp, row);
+
+        return screen_draw(ef, cursor, vp);
+    }
+
+    /* Scrolling invalidates every row as well. */
     if (viewport_ensure_visible(vp, row))
     {
         return screen_draw(ef, cursor, vp);

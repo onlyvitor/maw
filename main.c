@@ -80,7 +80,8 @@ int main(int argc, char **argv)
             break;
         }
 
-        if (interactive && screen_apply_change(ed->file, ed->cursor, &vp, &change) != 0)
+        if (interactive &&
+            screen_apply_change(ed->file, ed->cursor, &vp, terminal_size(), &change) != 0)
         {
             fprintf(stderr, "error: cannot draw the change\n");
             status = 1;

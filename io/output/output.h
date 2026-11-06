@@ -34,7 +34,7 @@ int screen_erase_below(void);
 int screen_draw(const EditorFile *ef, size_t cursor, const Viewport *vp);
 
 /* Repaint whatever editor_handle_key reported. */
-int screen_apply_change(const EditorFile *ef, size_t cursor, Viewport *vp,
+int screen_apply_change(const EditorFile *ef, size_t cursor, Viewport *vp, Size size,
                         const EditorChange *change);
 
 #endif
