@@ -44,6 +44,10 @@ repaint only the rows they disturb. Long lines are clipped to the
 terminal width (the last cell stays free); horizontal scrolling does
 not exist yet.
 
+The last row of the window is a status line, in reverse video, showing
+the file name, a `*` marker while there are pending edits, and the
+1-based cursor position; saving clears the marker.
+
 Saving is atomic: the content goes to `<file>.tmp.XXXXXX`, is synced to
 disk, and is renamed over the original. If a save step fails, the
 temporary file is kept and its name is printed.
