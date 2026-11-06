@@ -56,6 +56,7 @@ fn main() -> ExitCode {
     }
 
     let mut change = EditorChange::None;
+    let mut eof = false;
 
     while status == 0 {
         match scan() {
@@ -66,7 +67,8 @@ fn main() -> ExitCode {
                 break;
             }
             Ok(None) => {
-                println!("\n[EOF]");
+                /* Printed once the normal screen is back. */
+                eof = true;
                 break;
             }
             Ok(Some(key)) => match handle_key(&mut ed, key, &mut change) {
@@ -94,6 +96,10 @@ fn main() -> ExitCode {
     if let Err(err) = raw.disable() {
         eprintln!("{err}");
         status = 1;
+    }
+
+    if eof {
+        println!("\n[EOF]");
     }
 
     if status == 0 {

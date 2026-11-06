@@ -3,7 +3,7 @@
 // signal handlers directly: no editor logic belongs here.
 
 use std::io;
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use crate::io::viewport::Size;
@@ -33,6 +33,8 @@ pub enum TerminalError {
     Enable(io::Error),
     /// "error: cannot restore the terminal attributes: <cause>"
     Restore(io::Error),
+    /// "error: cannot switch the screen: <cause>"
+    Screen(io::Error),
 }
 
 impl std::fmt::Display for TerminalError {
@@ -47,14 +49,28 @@ impl std::fmt::Display for TerminalError {
             TerminalError::Restore(err) => {
                 write!(f, "error: cannot restore the terminal attributes: {err}")
             }
+            TerminalError::Screen(err) => {
+                write!(f, "error: cannot switch the screen: {err}")
+            }
         }
     }
 }
 
 impl std::error::Error for TerminalError {}
 
+/* Enter the alternate screen and clear it; leave it on the way out so
+ * the shell history stays untouched. */
+const ENTER_SCREEN: &[u8] = b"\x1b[?1049h\x1b[H\x1b[2J";
+const LEAVE_SCREEN: &[u8] = b"\x1b[?1049l";
+
+fn write_screen(sequence: &[u8]) -> io::Result<()> {
+    let mut out = io::stdout().lock();
+
+    out.write_all(sequence).and_then(|()| out.flush())
+}
+
 /* Restore the saved configuration and leave with the conventional
- * signal status. tcsetattr and _exit are async-signal-safe. */
+ * signal status. tcsetattr, write and _exit are async-signal-safe. */
 extern "C" fn handle_signal(signum: libc::c_int) {
     if RAWMODE_ENABLED.load(Ordering::Relaxed) {
         let saved = SAVED_TERMIOS.load(Ordering::Relaxed);
@@ -63,6 +79,14 @@ extern "C" fn handle_signal(signum: libc::c_int) {
             unsafe {
                 libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, saved);
             }
+        }
+
+        unsafe {
+            libc::write(
+                libc::STDOUT_FILENO,
+                LEAVE_SCREEN.as_ptr().cast(),
+                LEAVE_SCREEN.len(),
+            );
         }
     }
 
@@ -168,10 +192,23 @@ impl RawMode {
         self.enabled = true;
         RAWMODE_ENABLED.store(true, Ordering::Relaxed);
 
+        /* Do not leave the terminal raw if the screen switch fails. */
+        if let Err(err) = write_screen(ENTER_SCREEN) {
+            unsafe {
+                libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &saved);
+            }
+
+            self.enabled = false;
+            RAWMODE_ENABLED.store(false, Ordering::Relaxed);
+
+            return Err(TerminalError::Screen(err));
+        }
+
         Ok(())
     }
 
-    /* Restore the default terminal configuration. */
+    /* Restore the default terminal configuration and the normal
+     * screen. */
     pub fn disable(&mut self) -> Result<(), TerminalError> {
         if !self.enabled {
             return Ok(());
@@ -183,14 +220,18 @@ impl RawMode {
             libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, saved)
         };
 
+        self.enabled = false;
+        RAWMODE_ENABLED.store(false, Ordering::Relaxed);
+
+        /* Leave the alternate screen even when the attributes could not
+         * be restored, so the shell is usable either way. */
+        let screen = write_screen(LEAVE_SCREEN);
+
         if rc == -1 {
             return Err(TerminalError::Restore(io::Error::last_os_error()));
         }
 
-        self.enabled = false;
-        RAWMODE_ENABLED.store(false, Ordering::Relaxed);
-
-        Ok(())
+        screen.map_err(TerminalError::Screen)
     }
 }
 
