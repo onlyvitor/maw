@@ -6,6 +6,7 @@
 #include <signal.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -105,4 +106,17 @@ int rawmode_off(void)
     rawmode_enabled = 0;
 
     return 0;
+}
+
+// ask the kernel for the current window geometry
+Size terminal_size(void)
+{
+    struct winsize ws;
+
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_row == 0 || ws.ws_col == 0)
+    {
+        return size_fallback();
+    }
+
+    return size_new(ws.ws_row, ws.ws_col);
 }
