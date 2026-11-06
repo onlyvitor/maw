@@ -6,7 +6,7 @@
 use std::io::{self, Write};
 
 use crate::editor::{line_start_index, offset_of_row, row_column, CursorMotion, Editor, EditorChange};
-use crate::io::viewport::Viewport;
+use crate::io::viewport::{Size, Viewport};
 
 /* Move to the top-left cell. */
 fn goto_origin<W: Write>(out: &mut W) -> io::Result<()> {
@@ -156,11 +156,19 @@ fn append_byte(ed: &Editor, viewport: &Viewport, byte: u8) -> io::Result<()> {
 pub fn apply_change(
     ed: &Editor,
     viewport: &mut Viewport,
+    size: Size,
     change: EditorChange,
 ) -> io::Result<()> {
     let cursor_row = row_column(&ed.file, ed.cursor).0;
 
-    /* Scrolling invalidates every row, so repaint the whole window. */
+    /* A new geometry invalidates every row, so repaint the whole
+     * window and make sure the cursor is still in it. */
+    if viewport.resize(size) {
+        viewport.ensure_visible(cursor_row);
+        return screen_draw(ed, viewport);
+    }
+
+    /* Scrolling invalidates every row as well. */
     if viewport.ensure_visible(cursor_row) {
         return screen_draw(ed, viewport);
     }
