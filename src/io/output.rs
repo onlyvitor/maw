@@ -5,7 +5,9 @@
 
 use std::io::{self, Write};
 
-use crate::editor::{line_start_index, offset_of_row, row_column, CursorMotion, Editor, EditorChange};
+use crate::editor::{
+    line_start_index, offset_of_row, row_column, CursorMotion, Editor, EditorChange,
+};
 use crate::io::viewport::{Size, Viewport};
 
 /* Move to the top-left cell. */
