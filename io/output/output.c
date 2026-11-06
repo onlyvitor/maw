@@ -27,9 +27,19 @@ int screen_flush(void)
     return fflush(stdout) == EOF ? -1 : 0;
 }
 
-int screen_carriage_return(void)
+int screen_goto_origin(void)
 {
-    return fputc('\r', stdout) == EOF ? -1 : 0;
+    return screen_puts("\033[H");
+}
+
+int screen_goto_position(size_t row, size_t column)
+{
+    return fprintf(stdout, "\033[%zu;%zuH", row + 1, column + 1) < 0 ? -1 : 0;
+}
+
+int screen_erase_line(void)
+{
+    return screen_puts("\033[K");
 }
 
 int screen_erase_below(void)
@@ -37,128 +47,97 @@ int screen_erase_below(void)
     return screen_puts("\033[J");
 }
 
-int screen_goto_column(size_t column)
+/* Write one logical line clipped to width bytes and hand the caller
+ * the offset of the next line, or NULL when the buffer ends. */
+static int write_clipped_line(const char *limit, const char *start, size_t width,
+                              const char **next)
 {
-    if (column == 0)
+    const char *end = start;
+
+    while (end < limit && *end != '\n' && (size_t)(end - start) < width)
     {
-        return 0;
+        end++;
     }
 
-    return fprintf(stdout, "\033[%zuC", column) < 0 ? -1 : 0;
-}
-
-int screen_move_left(size_t columns)
-{
-    if (columns == 0)
-    {
-        return 0;
-    }
-
-    return fprintf(stdout, "\033[%zuD", columns) < 0 ? -1 : 0;
-}
-
-int screen_move_right(size_t columns)
-{
-    return screen_goto_column(columns);
-}
-
-int screen_move_up(size_t rows)
-{
-    if (rows == 0)
-    {
-        return 0;
-    }
-
-    return fprintf(stdout, "\033[%zuA", rows) < 0 ? -1 : 0;
-}
-
-int screen_move_down(size_t rows)
-{
-    if (rows == 0)
-    {
-        return 0;
-    }
-
-    return fprintf(stdout, "\033[%zuB", rows) < 0 ? -1 : 0;
-}
-
-static size_t cursor_column(const EditorFile *ef, size_t cursor)
-{
-    size_t column = 0;
-
-    editor_row_column(ef, cursor, NULL, &column);
-
-    return column;
-}
-
-int screen_apply_motion(const EditorFile *ef, size_t cursor, CursorMotion motion)
-{
-    switch (motion)
-    {
-    case CURSOR_MOTION_NONE:
-        return 0;
-    case CURSOR_MOTION_LEFT:
-        return screen_move_left(1) != 0 || screen_flush() != 0 ? -1 : 0;
-    case CURSOR_MOTION_RIGHT:
-        return screen_move_right(1) != 0 || screen_flush() != 0 ? -1 : 0;
-    case CURSOR_MOTION_NEXT_LINE:
-        return screen_puts("\r\n") != 0 || screen_flush() != 0 ? -1 : 0;
-    case CURSOR_MOTION_PREVIOUS_LINE:
-        return screen_move_up(1) != 0 || screen_carriage_return() != 0 ||
-                       screen_goto_column(cursor_column(ef, cursor)) != 0 ||
-                       screen_flush() != 0
-                   ? -1
-                   : 0;
-    case CURSOR_MOTION_UP:
-        return screen_move_up(1) != 0 || screen_carriage_return() != 0 ||
-                       screen_goto_column(cursor_column(ef, cursor)) != 0 ||
-                       screen_flush() != 0
-                   ? -1
-                   : 0;
-    case CURSOR_MOTION_DOWN:
-        return screen_move_down(1) != 0 || screen_carriage_return() != 0 ||
-                       screen_goto_column(cursor_column(ef, cursor)) != 0 ||
-                       screen_flush() != 0
-                   ? -1
-                   : 0;
-    }
-
-    return -1;
-}
-
-int screen_redraw_from(const EditorFile *ef, size_t start, size_t cursor)
-{
-    /* Move to the beginning of the line and erase everything below it. */
-    if (screen_carriage_return() != 0 || screen_erase_below() != 0)
+    if (screen_write(start, (size_t)(end - start)) != 0)
     {
         return -1;
     }
 
-    if (screen_write(ef->data + start, ef->len - start) != 0)
+    /* Skip whatever did not fit until the end of the line. */
+    const char *tail = end;
+
+    while (tail < limit && *tail != '\n')
+    {
+        tail++;
+    }
+
+    *next = tail < limit ? tail + 1 : NULL;
+
+    return 0;
+}
+
+/* Put the terminal cursor where the editor cursor is. The viewport has
+ * already been scrolled to keep that row visible. */
+static int position_cursor(const EditorFile *ef, size_t cursor, const Viewport *vp)
+{
+    size_t row, column;
+
+    editor_row_column(ef, cursor, &row, &column);
+
+    size_t screen_row = row >= vp->top_row ? row - vp->top_row : 0;
+
+    size_t rows = viewport_size(vp).rows;
+
+    if (screen_row > rows - 1)
+    {
+        screen_row = rows - 1;
+    }
+
+    size_t screen_column = column;
+    size_t width = size_content_width(viewport_size(vp));
+
+    if (screen_column > width)
+    {
+        screen_column = width;
+    }
+
+    return screen_goto_position(screen_row, screen_column);
+}
+
+/* Repaint every visible row and put the cursor back on screen. */
+int screen_draw(const EditorFile *ef, size_t cursor, const Viewport *vp)
+{
+    const char *limit = ef->data + ef->len;
+    size_t width = size_content_width(viewport_size(vp));
+    size_t rows = viewport_size(vp).rows;
+
+    if (screen_goto_origin() != 0)
     {
         return -1;
     }
 
-    /* Count how many lines were printed after the cursor. */
-    size_t rows = 0;
+    const char *offset = offset_of_row(ef->data, ef->len, vp->top_row);
 
-    for (size_t i = cursor; i < ef->len; i++)
+    for (size_t screen_row = 0; screen_row < rows; screen_row++)
     {
-        if (ef->data[i] == '\n')
+        if (screen_row > 0 && screen_puts("\r\n") != 0)
         {
-            rows++;
+            return -1;
+        }
+
+        if (screen_erase_line() != 0)
+        {
+            return -1;
+        }
+
+        if (offset != NULL && write_clipped_line(limit, offset, width, &offset) != 0)
+        {
+            return -1;
         }
     }
 
-    if (screen_move_up(rows) != 0 || screen_carriage_return() != 0)
-    {
-        return -1;
-    }
-
-    /* Move right to the column where the cursor lives. */
-    size_t column = cursor - line_start_index(ef->data, cursor);
-
-    if (screen_goto_column(column) != 0)
+    if (position_cursor(ef, cursor, vp) != 0)
     {
         return -1;
     }
@@ -166,30 +145,20 @@ int screen_redraw_from(const EditorFile *ef, size_t start, size_t cursor)
     return screen_flush();
 }
 
-int screen_apply_change(const Editor *ed, const EditorChange *change)
+/* Repaint whatever editor_handle_key reported. */
+int screen_apply_change(const EditorFile *ef, size_t cursor, Viewport *vp,
+                        const EditorChange *change)
 {
-    int rc = 0;
+    (void)vp;
 
     switch (change->kind)
     {
     case CHANGE_NONE:
         return 0;
     case CHANGE_CURSOR:
-        return screen_apply_motion(ed->file, ed->cursor, change->motion);
     case CHANGE_LINE:
-        if (change->removed_newline)
-        {
-            rc = screen_move_up(1);
-        }
-
-        if (rc == 0)
-        {
-            rc = screen_redraw_from(ed->file, change->start, ed->cursor);
-        }
-
-        return rc;
     case CHANGE_APPEND:
-        return screen_putc(change->byte) != 0 || screen_flush() != 0 ? -1 : 0;
+        return screen_draw(ef, cursor, vp);
     }
 
     return -1;

@@ -86,6 +86,29 @@ void editor_row_column(const EditorFile *ef, size_t pos, size_t *row, size_t *co
     }
 }
 
+const char *offset_of_row(const char *data, size_t len, size_t row)
+{
+    if (row == 0)
+    {
+        return data;
+    }
+
+    for (size_t i = 0; i < len; i++)
+    {
+        if (data[i] == '\n')
+        {
+            row--;
+
+            if (row == 0)
+            {
+                return data + i + 1;
+            }
+        }
+    }
+
+    return NULL;
+}
+
 CursorMotion editor_move_left(Editor *ed)
 {
     if (ed->cursor == 0)

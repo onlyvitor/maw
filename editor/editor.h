@@ -27,6 +27,10 @@ size_t line_end_index(const char *data, size_t len, size_t pos);
 /* 0-based row and byte column of pos. */
 void editor_row_column(const EditorFile *ef, size_t pos, size_t *row, size_t *column);
 
+/* First byte of the given 0-based row, or NULL past the last row. A
+ * trailing newline opens one more empty row at the end of the buffer. */
+const char *offset_of_row(const char *data, size_t len, size_t row);
+
 /*
  * What a movement did, so the caller can render it without knowing the
  * buffer layout. NONE means the cursor did not move.

@@ -6,6 +6,7 @@
 #include "io/input/input.h"
 #include "io/output/output.h"
 #include "io/terminal/terminal.h"
+#include "io/viewport/viewport.h"
 
 int main(int argc, char **argv)
 {
@@ -30,11 +31,21 @@ int main(int argc, char **argv)
 
     bool interactive = isatty(STDIN_FILENO) != 0;
     int status = 0;
+    Viewport vp = viewport_new(terminal_size());
 
-    if (interactive && (screen_write(ed->file->data, ed->file->len) != 0 || screen_flush() != 0))
+    if (interactive)
     {
-        fprintf(stderr, "error: cannot draw the file\n");
-        status = 1;
+        /* Start with the cursor (the end of the buffer) on screen. */
+        size_t cursor_row, column;
+
+        editor_row_column(ed->file, ed->cursor, &cursor_row, &column);
+        viewport_ensure_visible(&vp, cursor_row);
+
+        if (screen_draw(ed->file, ed->cursor, &vp) != 0)
+        {
+            fprintf(stderr, "error: cannot draw the file\n");
+            status = 1;
+        }
     }
 
     while (status == 0)
@@ -69,7 +80,7 @@ int main(int argc, char **argv)
             break;
         }
 
-        if (interactive && screen_apply_change(ed, &change) != 0)
+        if (interactive && screen_apply_change(ed->file, ed->cursor, &vp, &change) != 0)
         {
             fprintf(stderr, "error: cannot draw the change\n");
             status = 1;

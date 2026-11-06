@@ -33,6 +33,9 @@ typedef struct Viewport
 
 Viewport viewport_new(Size size);
 
+/* The geometry this viewport draws under. */
+Size viewport_size(const Viewport *vp);
+
 /* Adopt a new geometry. Returns true when the screen has to be
  * repainted from scratch. */
 bool viewport_resize(Viewport *vp, Size size);

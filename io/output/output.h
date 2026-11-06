@@ -4,10 +4,13 @@
 #include <stddef.h>
 
 #include "editor/editor.h"
+#include "io/viewport/viewport.h"
 
 /*
- * Minimal terminal output primitives. They return 0 on success and -1 when
- * writing to stdout fails.
+ * Screen output for a viewport: the editor reports what changed, this
+ * module owns the escape codes and the screen geometry. Only the
+ * visible rows of the buffer are ever written. The functions return 0
+ * on success and -1 when writing to stdout fails.
  */
 
 int screen_puts(const char *s);
@@ -15,21 +18,23 @@ int screen_write(const char *s, size_t n);
 int screen_putc(char c);
 int screen_flush(void);
 
-int screen_carriage_return(void);
+/* Move to the top-left cell. */
+int screen_goto_origin(void);
+
+/* Put the cursor at a 0-based screen row and column. */
+int screen_goto_position(size_t row, size_t column);
+
+/* Erase the current line from the cursor to its end. */
+int screen_erase_line(void);
+
+/* Erase from the cursor to the bottom of the screen. */
 int screen_erase_below(void);
-int screen_goto_column(size_t column);
-int screen_move_left(size_t columns);
-int screen_move_right(size_t columns);
-int screen_move_up(size_t rows);
-int screen_move_down(size_t rows);
 
-/* Draw the cursor motion that editor_move_* reported. */
-int screen_apply_motion(const EditorFile *ef, size_t cursor, CursorMotion motion);
-
-/* Redraw from the start of a line and put the cursor back at cursor. */
-int screen_redraw_from(const EditorFile *ef, size_t start, size_t cursor);
+/* Repaint every visible row and put the cursor back on screen. */
+int screen_draw(const EditorFile *ef, size_t cursor, const Viewport *vp);
 
 /* Repaint whatever editor_handle_key reported. */
-int screen_apply_change(const Editor *ed, const EditorChange *change);
+int screen_apply_change(const EditorFile *ef, size_t cursor, Viewport *vp,
+                        const EditorChange *change);
 
 #endif

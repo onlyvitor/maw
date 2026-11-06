@@ -31,6 +31,11 @@ Viewport viewport_new(Size size)
     return vp;
 }
 
+Size viewport_size(const Viewport *vp)
+{
+    return vp->size;
+}
+
 bool viewport_resize(Viewport *vp, Size size)
 {
     if (vp->size.rows == size.rows && vp->size.columns == size.columns)
