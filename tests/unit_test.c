@@ -9,6 +9,7 @@
 
 #include "editor/editor.h"
 #include "fileio/fileio.h"
+#include "io/viewport/viewport.h"
 
 static int checks;
 static int failures;
@@ -246,6 +247,106 @@ static void test_editor_row_column(void)
     editor_row_column(&ef, 6, &row, NULL);
     CHECK_SIZE(row, 1);
     CHECK_SIZE(column, 99);
+}
+
+static void test_offset_of_row(void)
+{
+    const char *data = "abc\ndef\n";
+
+    CHECK(offset_of_row(data, 8, 0) == data);
+    CHECK(offset_of_row(data, 8, 1) == data + 4);
+    /* An empty row after the trailing newline still exists. */
+    CHECK(offset_of_row(data, 8, 2) == data + 8);
+    CHECK(offset_of_row(data, 8, 3) == NULL);
+
+    CHECK(offset_of_row("", 0, 0) != NULL);
+    CHECK(offset_of_row("", 0, 1) == NULL);
+    CHECK(offset_of_row("abc", 3, 1) == NULL);
+}
+
+/* ------------------------------------------------------------------ */
+/* viewport                                                            */
+/* ------------------------------------------------------------------ */
+
+static void test_viewport_starts_at_the_first_row(void)
+{
+    Viewport vp = viewport_new(size_new(24, 80));
+
+    CHECK_SIZE(vp.top_row, 0);
+    CHECK_SIZE(viewport_screen_row(&vp, 0), 0);
+}
+
+static void test_ensure_visible_inside_the_window(void)
+{
+    Viewport vp = viewport_new(size_new(10, 80));
+
+    CHECK(viewport_ensure_visible(&vp, 0) == false);
+    CHECK(viewport_ensure_visible(&vp, 9) == false);
+    CHECK_SIZE(vp.top_row, 0);
+
+    CHECK(viewport_ensure_visible(&vp, 20) == true);
+    CHECK(viewport_ensure_visible(&vp, 11) == false);
+    CHECK(viewport_ensure_visible(&vp, 20) == false);
+    CHECK_SIZE(vp.top_row, 11);
+}
+
+static void test_ensure_visible_scrolls_down_the_least(void)
+{
+    Viewport vp = viewport_new(size_new(10, 80));
+
+    /* Rows 0..9 are visible; row 10 forces one row of scroll. */
+    CHECK(viewport_ensure_visible(&vp, 10) == true);
+    CHECK_SIZE(vp.top_row, 1);
+    CHECK_SIZE(viewport_screen_row(&vp, 10), 9);
+
+    CHECK(viewport_ensure_visible(&vp, 30) == true);
+    CHECK_SIZE(vp.top_row, 21);
+    CHECK_SIZE(viewport_screen_row(&vp, 30), 9);
+}
+
+static void test_ensure_visible_scrolls_up_to_the_cursor(void)
+{
+    Viewport vp = viewport_new(size_new(10, 80));
+
+    CHECK(viewport_ensure_visible(&vp, 30) == true);
+
+    CHECK(viewport_ensure_visible(&vp, 5) == true);
+    CHECK_SIZE(vp.top_row, 5);
+    CHECK_SIZE(viewport_screen_row(&vp, 5), 0);
+    CHECK_SIZE(viewport_screen_row(&vp, 14), 9);
+}
+
+static void test_resize_only_reports_real_changes(void)
+{
+    Viewport vp = viewport_new(size_new(24, 80));
+
+    CHECK(viewport_resize(&vp, size_new(24, 80)) == false);
+    CHECK(viewport_resize(&vp, size_new(30, 100)) == true);
+
+    Size size = viewport_size(&vp);
+
+    CHECK_SIZE(size.rows, 30);
+    CHECK_SIZE(size.columns, 100);
+
+    CHECK(viewport_resize(&vp, size_new(30, 100)) == false);
+}
+
+static void test_size_clamps_and_content_width(void)
+{
+    Size zero = size_new(0, 0);
+
+    CHECK_SIZE(zero.rows, 1);
+    CHECK_SIZE(zero.columns, 1);
+    CHECK_SIZE(size_content_width(zero), 1);
+
+    /* The last cell stays free so a full row never wraps. */
+    CHECK_SIZE(size_content_width(size_new(24, 80)), 79);
+    CHECK_SIZE(size_content_width(size_new(24, 2)), 1);
+
+    Size fallback = size_fallback();
+
+    CHECK_SIZE(fallback.rows, 24);
+    CHECK_SIZE(fallback.columns, 80);
 }
 
 /* ------------------------------------------------------------------ */
@@ -601,6 +702,14 @@ int main(void)
     test_line_start_index();
     test_line_end_index();
     test_editor_row_column();
+    test_offset_of_row();
+
+    test_viewport_starts_at_the_first_row();
+    test_ensure_visible_inside_the_window();
+    test_ensure_visible_scrolls_down_the_least();
+    test_ensure_visible_scrolls_up_to_the_cursor();
+    test_resize_only_reports_real_changes();
+    test_size_clamps_and_content_width();
 
     test_move_left();
     test_move_right();

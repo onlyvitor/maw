@@ -6,7 +6,7 @@ SANITIZE_FLAGS := -g -fsanitize=address,undefined
 
 SRC := $(wildcard *.c) $(wildcard io/*/*.c) $(wildcard fileio/*.c) $(wildcard editor/*.c)
 HEADERS := $(wildcard *.h) $(wildcard io/*/*.h) $(wildcard fileio/*.h) $(wildcard editor/*.h)
-UNIT_SRC := tests/unit_test.c editor/editor.c fileio/fileio.c
+UNIT_SRC := tests/unit_test.c io/viewport/viewport.c editor/editor.c fileio/fileio.c
 UNIT_BIN := tests/unit_tests
 TARGET := oldvim
 
