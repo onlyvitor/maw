@@ -28,7 +28,7 @@ int status_paint(const Editor *ed, const Viewport *vp)
     buffer_row_column(ed->file->data, ed->file->len, ed->cursor, &row, &column);
 
     char text[1024];
-    int written = snprintf(text, sizeof text, "%s%s %zu,%zu  ^S:save  ^Q:quit  ^1:quit",
+    int written = snprintf(text, sizeof text, "%s%s %zu,%zu  ^S:save  ^Q:quit",
                            ed->file->path, ed->dirty ? " *" : "", row + 1, column + 1);
     if (written < 0) return -1;
 

@@ -10,7 +10,6 @@
 #define KEY_CTRL_S       0x13
 #define KEY_CTRL_D       0x04
 #define KEY_CTRL_Q       0x11
-#define KEY_CTRL_1       0x01
 #define KEY_BACKSPACE    0x7f
 #define KEY_ESC          0x1b
 
