@@ -159,7 +159,7 @@ EditorAction editor_handle_key(Editor *ed, int key, EditorChange *change)
 {
     change->kind = CHANGE_NONE;
 
-    if (key == KEY_CTRL_D)
+    if (key == KEY_CTRL_D || key == KEY_CTRL_Q || key == KEY_CTRL_1)
     {
         return ACTION_QUIT;
     }
