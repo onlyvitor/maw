@@ -6,6 +6,8 @@ use std::io;
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
+use crate::io::viewport::Size;
+
 /// Signals that must restore the terminal even when the editor dies.
 const FATAL_SIGNALS: [libc::c_int; 4] = [
     libc::SIGINT,
@@ -69,8 +71,25 @@ extern "C" fn handle_signal(signum: libc::c_int) {
     }
 }
 
-fn install_signal_handlers() {
-    let mut failure = None;
+/* Ask the terminal for its geometry. Falls back to 80x24 when stdout
+ * is not a terminal or the kernel reports a zero-sized screen. */
+pub fn size() -> Size {
+    if !io::stdout().is_terminal() {
+        return Size::FALLBACK;
+    }
+
+    let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
+
+    let rc = unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) };
+
+    if rc == -1 || ws.ws_row == 0 || ws.ws_col == 0 {
+        return Size::FALLBACK;
+    }
+
+    Size::new(ws.ws_row as usize, ws.ws_col as usize)
+}
+
+fn install_signal_handlers() {    let mut failure = None;
 
     for &signal in &FATAL_SIGNALS {
         let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
@@ -191,6 +210,12 @@ mod tests {
 
         mode.disable().unwrap();
         assert!(!mode.enabled);
+    }
+
+    #[test]
+    fn size_falls_back_without_a_tty() {
+        /* The test runner's stdout is captured, not a terminal. */
+        assert_eq!(size(), Size::FALLBACK);
     }
 
     #[test]
