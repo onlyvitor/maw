@@ -12,6 +12,7 @@
 #include "src/editor/editor.h"
 #include "src/editor/edit_ops.h"
 #include "src/fileio/fileio.h"
+#include "src/text/text.h"
 #include "src/viewport/geometry.h"
 #include "src/viewport/viewport.h"
 
@@ -161,6 +162,51 @@ static void test_offset_of_row(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* text tests                                                          */
+/* ------------------------------------------------------------------ */
+
+static void test_utf8_lengths_and_cells(void)
+{
+    const char *data = "a" "\xC3\xA9" "\xE4\xB8\xAD" "\xF0\x9F\x98\x80";
+    size_t len = strlen(data);
+
+    CHECK_SIZE(text_char_length(data, len, 0), 1);
+    CHECK_SIZE(text_char_length(data, len, 1), 2);
+    CHECK_SIZE(text_char_length(data, len, 3), 3);
+    CHECK_SIZE(text_char_length(data, len, 6), 4);
+
+    CHECK_SIZE(text_char_cells(data, len, 0), 1);
+    CHECK_SIZE(text_char_cells(data, len, 1), 1);
+    CHECK_SIZE(text_char_cells(data, len, 3), 2);
+    CHECK_SIZE(text_char_cells(data, len, 6), 2);
+
+    CHECK_SIZE(text_char_length("\xC3", 1, 0), 1);
+    CHECK_SIZE(text_char_length("\xC3\x28", 2, 0), 1);
+}
+
+static void test_text_width_and_offsets(void)
+{
+    CHECK_SIZE(text_width("abc", 0, 3), 3);
+    CHECK_SIZE(text_width("\t", 0, 1), 8);
+    CHECK_SIZE(text_width("a\t", 0, 2), 8);
+    CHECK_SIZE(text_width("1234567\t", 0, 8), 8);
+    CHECK_SIZE(text_width("12345678\t", 0, 9), 16);
+    CHECK_SIZE(text_width("a\r", 0, 2), 1);
+    CHECK_SIZE(text_width("\x01", 0, 1), 2);
+    CHECK_SIZE(text_width("\xC3\xA9", 0, 2), 1);
+    CHECK_SIZE(text_width("\xE4\xB8\xAD", 0, 3), 2);
+
+    const char *data = "a" "\xC3\xA9" "z";
+    CHECK_SIZE(text_next_offset(data, 4, 0), 1);
+    CHECK_SIZE(text_next_offset(data, 4, 1), 3);
+    CHECK_SIZE(text_prev_offset(data, 3), 1);
+    CHECK_SIZE(text_prev_offset(data, 1), 0);
+
+    CHECK_SIZE(text_offset_at_column("a\tb", 0, 3, 8), 2);
+    CHECK_SIZE(text_offset_at_column("a\tb", 0, 3, 3), 1);
+}
+
+/* ------------------------------------------------------------------ */
 /* editor movement tests                                               */
 /* ------------------------------------------------------------------ */
 
@@ -240,6 +286,32 @@ static void test_move_down(void)
     dispose_editor(ed);
 }
 
+static void test_moves_over_utf8(void)
+{
+    Editor *ed = make_editor("a" "\xC3\xA9" "z");
+
+    ed->cursor = 4;
+    CHECK(editor_move_left(ed) == CURSOR_MOTION_LEFT);
+    CHECK_SIZE(ed->cursor, 3);
+    CHECK(editor_move_left(ed) == CURSOR_MOTION_LEFT);
+    CHECK_SIZE(ed->cursor, 1);
+    CHECK(editor_move_right(ed) == CURSOR_MOTION_RIGHT);
+    CHECK_SIZE(ed->cursor, 3);
+
+    dispose_editor(ed);
+}
+
+static void test_vertical_movement_uses_display_columns(void)
+{
+    Editor *ed = make_editor("\xE4\xB8\xAD" "\xE4\xB8\xAD" "\nab\n");
+
+    ed->cursor = 6;
+    CHECK(editor_move_down(ed) == CURSOR_MOTION_DOWN);
+    CHECK_SIZE(ed->cursor, 9);
+
+    dispose_editor(ed);
+}
+
 /* ------------------------------------------------------------------ */
 /* editor key handling tests                                           */
 /* ------------------------------------------------------------------ */
@@ -311,6 +383,23 @@ static void test_handle_key_backspace(void)
     dispose_editor(ed);
 }
 
+static void test_handle_key_backspace_removes_utf8_character(void)
+{
+    Editor *ed = make_editor("a" "\xC3\xA9" "z");
+    ed->cursor = 3;
+
+    EditorAction action;
+    EditorChange change;
+    press(ed, KEY_BACKSPACE, &action, &change);
+
+    CHECK(action == ACTION_CONTINUE);
+    CHECK(change.kind == CHANGE_LINE);
+    CHECK(strcmp(ed->file->data, "az") == 0);
+    CHECK_SIZE(ed->cursor, 1);
+
+    dispose_editor(ed);
+}
+
 static void test_handle_key_moves(void)
 {
     Editor *ed = make_editor("ab\ncd");
@@ -375,6 +464,65 @@ static void test_insert_grows_buffer(void)
     CHECK(ef->cap >= ef->len);
 
     fileio_close(ef);
+}
+
+static void test_save_new_file_respects_umask(void)
+{
+    char path[] = "/tmp/maw-perm-XXXXXX";
+    int fd = mkstemp(path);
+    CHECK(fd >= 0);
+    if (fd < 0)
+    {
+        return;
+    }
+    close(fd);
+    unlink(path);
+
+    mode_t old_mask = umask(0077);
+    EditorFile *ef = fileio_from_data(path, "x", 1);
+    CHECK(ef != NULL);
+
+    if (ef != NULL)
+    {
+        CHECK(fileio_save(ef) == 0);
+
+        struct stat st;
+        CHECK(stat(path, &st) == 0);
+        CHECK((st.st_mode & 0777) == 0600);
+        fileio_close(ef);
+    }
+
+    umask(old_mask);
+    unlink(path);
+}
+
+static void test_save_preserves_existing_mode(void)
+{
+    char path[] = "/tmp/maw-perm-XXXXXX";
+    int fd = mkstemp(path);
+    CHECK(fd >= 0);
+    if (fd < 0)
+    {
+        return;
+    }
+    close(fd);
+    CHECK(chmod(path, 0640) == 0);
+
+    EditorFile *ef = fileio_open(path);
+    CHECK(ef != NULL);
+
+    if (ef != NULL)
+    {
+        CHECK(edit_insert_byte(ef, ef->len, 'x') == EDIT_OK);
+        CHECK(fileio_save(ef) == 0);
+
+        struct stat st;
+        CHECK(stat(path, &st) == 0);
+        CHECK((st.st_mode & 0777) == 0640);
+        fileio_close(ef);
+    }
+
+    unlink(path);
 }
 
 static void test_remove_byte_at(void)
@@ -486,19 +634,27 @@ int main(void)
     test_row_column();
     test_offset_of_row();
 
+    test_utf8_lengths_and_cells();
+    test_text_width_and_offsets();
+
     test_move_left();
     test_move_right();
     test_move_up();
     test_move_down();
+    test_moves_over_utf8();
+    test_vertical_movement_uses_display_columns();
 
     test_handle_key_appends();
     test_handle_key_inserts_in_middle();
     test_handle_key_backspace();
+    test_handle_key_backspace_removes_utf8_character();
     test_handle_key_moves();
     test_handle_key_quit();
 
     test_insert_bytes();
     test_insert_grows_buffer();
+    test_save_new_file_respects_umask();
+    test_save_preserves_existing_mode();
     test_remove_byte_at();
 
     test_viewport_starts_at_first_row();

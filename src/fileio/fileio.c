@@ -11,9 +11,15 @@
 
 #include "fileio.h"
 
-#define PERMISSION_MASK 07777
-#define DEFAULT_FILE_MODE 0644
+#define PERMISSION_MASK 0777
 #define MIN_BUFFER_CAPACITY 64
+
+static mode_t default_file_mode(void)
+{
+    mode_t mask = umask(0);
+    umask(mask);
+    return (mode_t)(0666 & ~mask);
+}
 
 static size_t initial_capacity(size_t len)
 {
@@ -241,7 +247,7 @@ static EditorFile *make_editor_file(const char *filename, char *content, size_t 
         ef->cap = len + 1;
     }
 
-    ef->mode = exist ? (st->st_mode & PERMISSION_MASK) : DEFAULT_FILE_MODE;
+    ef->mode = exist ? (st->st_mode & PERMISSION_MASK) : default_file_mode();
     ef->exist = exist;
     return ef;
 }
@@ -422,7 +428,7 @@ int fileio_remove(EditorFile *ef, size_t pos)
 EditorFile *fileio_from_data(const char *path, const char *data, size_t len)
 {
     struct stat st = {0};
-    st.st_mode = DEFAULT_FILE_MODE;
+    st.st_mode = 0644;
     char *copy = malloc(len + 1);
     if (copy == NULL)
     {

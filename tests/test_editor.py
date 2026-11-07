@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
-"""End-to-end tests for oldvim, driven through a pty."""
+"""End-to-end tests for maw, driven through a pty."""
 import fcntl
 import os
 import pty
 import select
 import shutil
+import signal
 import struct
 import sys
 import tempfile
 import termios
 import time
 
-# The built binary; OLDVIM_BIN overrides for out-of-tree builds.
+# The built binary; MAW_BIN overrides for out-of-tree builds.
 BIN = os.environ.get(
-    "OLDVIM_BIN",
+    "MAW_BIN",
     os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         "..",
-        "oldvim",
+        "maw",
     ),
 )
 
@@ -249,6 +250,83 @@ def test_resizing_repaints_the_window(tmp):
     session.quit()
 
 
+def test_resize_repaints_without_a_key(tmp):
+    case = Case(tmp)
+    path = case.write(
+        "big.txt", b"".join(f"L{i:02d}\n".encode() for i in range(30))
+    )
+    session = Session(path)
+
+    set_winsize(session.fd, 10, 40)
+    frame = last_frame(session.drain())
+
+    assert b"L22" in frame, "a resize must repaint the smaller window"
+    assert b"L21" not in frame, "rows above the new window are not drawn"
+    session.quit()
+
+
+def test_suspend_and_resume_redraws(tmp):
+    case = Case(tmp)
+    path = case.write("a.txt", b"abc\n")
+    session = Session(path)
+
+    # The pty child is an orphaned process group, so the kernel
+    # discards the SIGTSTP raised by the handler. The terminal
+    # restore/resume path is still exercised by the handler.
+    os.kill(session.pid, signal.SIGTSTP)
+    stopped = session.drain()
+    assert b"\x1b[?1049l" in stopped, "suspend must leave the alternate screen"
+
+    os.kill(session.pid, signal.SIGCONT)
+    resumed = session.drain()
+    assert b"\x1b[?1049h" in resumed, "resume must re-enter the alternate screen"
+    assert b"abc" in last_frame(resumed), "resume must repaint the file"
+    session.quit()
+
+
+def test_sanitizes_control_bytes_and_expands_tabs(tmp):
+    case = Case(tmp)
+    path = case.write("raw.txt", b"a\tb\nc\x1bd\n")
+    session = Session(path)
+
+    frame = last_frame(session.initial)
+
+    assert b"a       b" in frame, "tabs expand to the next 8-column stop"
+    assert b"c^[d" in frame, "control bytes are shown in caret notation"
+    assert b"c\x1bd" not in frame, "file bytes must not reach the terminal raw"
+    session.quit()
+
+
+def test_utf8_round_trip_and_status_column(tmp):
+    case = Case(tmp)
+    path = case.write("utf8.txt", b"")
+    session = Session(path)
+
+    output = session.send("\u00e9".encode())
+    status = output.rsplit(b"\x1b[7m", 1)[-1]
+
+    assert b"1,2" in status, "the status column counts display cells"
+
+    session.send(BACKSPACE)
+    session.send(b"x")
+    session.send(SAVE)
+    assert case.read(path) == b"x"
+    session.quit()
+
+
+def test_ctrl_c_is_ignored(tmp):
+    case = Case(tmp)
+    path = case.write("a.txt", b"abc\n")
+    session = Session(path)
+
+    session.send(b"\x03")
+    session.send(b"X")
+    session.send(SAVE)
+
+    assert case.read(path) == b"abc\nX", "Ctrl+C must not insert or quit"
+    session.quit()
+
+
 def test_the_status_line_reports_the_state(tmp):
     case = Case(tmp)
     path = case.write("stat.txt", b"")
@@ -299,6 +377,20 @@ def test_save_then_keep_editing(tmp):
     assert case.read(path) == b"ab", "quit must save pending edits"
 
 
+def test_quit_without_edits_does_not_rewrite_the_file(tmp):
+    case = Case(tmp)
+    path = case.write("a.txt", b"abc\n")
+    stamp = 1_000_000_000
+    os.utime(path, (stamp, stamp))
+
+    session = Session(path)
+    session.quit()
+
+    assert os.stat(path).st_mtime_ns == stamp * 1_000_000_000, (
+        "quitting without edits must not save"
+    )
+
+
 def test_non_interactive_stdin(tmp):
     case = Case(tmp)
     path = case.write("a.txt", b"")
@@ -321,16 +413,22 @@ def main():
         test_typing_past_the_bottom_scrolls_the_window,
         test_clips_lines_wider_than_the_screen,
         test_resizing_repaints_the_window,
+        test_resize_repaints_without_a_key,
+        test_suspend_and_resume_redraws,
+        test_sanitizes_control_bytes_and_expands_tabs,
+        test_utf8_round_trip_and_status_column,
+        test_ctrl_c_is_ignored,
         test_the_status_line_reports_the_state,
         test_uses_the_alternate_screen,
         test_create_new_file,
         test_save_then_keep_editing,
+        test_quit_without_edits_does_not_rewrite_the_file,
         test_non_interactive_stdin,
     ]
     failed = 0
 
     for test in tests:
-        tmp = tempfile.mkdtemp(prefix="oldvim-test-")
+        tmp = tempfile.mkdtemp(prefix="maw-test-")
 
         try:
             test(tmp)

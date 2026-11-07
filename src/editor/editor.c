@@ -1,6 +1,7 @@
 #include "editor.h"
 #include "edit_ops.h"
 #include "src/buffer/buffer.h"
+#include "src/text/text.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -43,13 +44,15 @@ CursorMotion editor_move_left(Editor *ed)
         return CURSOR_MOTION_NONE;
     }
 
-    if (ed->file->data[ed->cursor - 1] == '\n')
+    size_t previous = text_prev_offset(ed->file->data, ed->cursor);
+
+    if (ed->file->data[previous] == '\n')
     {
-        ed->cursor--;
+        ed->cursor = previous;
         return CURSOR_MOTION_PREVIOUS_LINE;
     }
 
-    ed->cursor--;
+    ed->cursor = previous;
     return CURSOR_MOTION_LEFT;
 }
 
@@ -66,7 +69,7 @@ CursorMotion editor_move_right(Editor *ed)
         return CURSOR_MOTION_NEXT_LINE;
     }
 
-    ed->cursor++;
+    ed->cursor = text_next_offset(ed->file->data, ed->file->len, ed->cursor);
     return CURSOR_MOTION_RIGHT;
 }
 
@@ -81,11 +84,12 @@ CursorMotion editor_move_up(Editor *ed)
 
     size_t prev_end = start - 1;
     size_t prev_start = buffer_line_start_index(ed->file->data, prev_end);
-    size_t prev_len = prev_end - prev_start;
-    size_t column = ed->cursor - start;
-    size_t new_column = column < prev_len ? column : prev_len;
+    size_t column = text_width(ed->file->data, start, ed->cursor);
+    size_t prev_width = text_width(ed->file->data, prev_start, prev_end);
+    size_t new_column = column < prev_width ? column : prev_width;
 
-    ed->cursor = prev_start + new_column;
+    ed->cursor = text_offset_at_column(ed->file->data, prev_start, prev_end,
+                                       new_column);
     return CURSOR_MOTION_UP;
 }
 
@@ -101,11 +105,12 @@ CursorMotion editor_move_down(Editor *ed)
 
     size_t next_start = end + 1;
     size_t next_end = buffer_line_end_index(ed->file->data, ed->file->len, next_start);
-    size_t next_len = next_end - next_start;
-    size_t column = ed->cursor - start;
-    size_t new_column = column < next_len ? column : next_len;
+    size_t column = text_width(ed->file->data, start, ed->cursor);
+    size_t next_width = text_width(ed->file->data, next_start, next_end);
+    size_t new_column = column < next_width ? column : next_width;
 
-    ed->cursor = next_start + new_column;
+    ed->cursor = text_offset_at_column(ed->file->data, next_start, next_end,
+                                       new_column);
     return CURSOR_MOTION_DOWN;
 }
 
@@ -116,13 +121,25 @@ static EditorAction handle_backspace(Editor *ed, EditorChange *change)
         return ACTION_CONTINUE;
     }
 
-    size_t pos = ed->cursor - 1;
-    bool removed_newline = ed->file->data[pos] == '\n';
+    size_t pos = text_prev_offset(ed->file->data, ed->cursor);
+    bool removed_newline = false;
     size_t start = buffer_line_start_index(ed->file->data, pos);
 
-    if (edit_remove_byte(ed->file, pos) != EDIT_OK)
+    for (size_t i = pos; i < ed->cursor; i++)
     {
-        return ACTION_ERROR;
+        if (ed->file->data[i] == '\n')
+        {
+            removed_newline = true;
+        }
+    }
+
+    size_t count = ed->cursor - pos;
+    for (size_t i = 0; i < count; i++)
+    {
+        if (edit_remove_byte(ed->file, pos) != EDIT_OK)
+        {
+            return ACTION_ERROR;
+        }
     }
 
     ed->cursor = pos;
@@ -164,6 +181,16 @@ EditorAction editor_handle_key(Editor *ed, int key, EditorChange *change)
         return ACTION_QUIT;
     }
 
+    if (key == KEY_CTRL_Z)
+    {
+        return ACTION_SUSPEND;
+    }
+
+    if (key == KEY_CTRL_C || key == KEY_CTRL_BACKSLASH || key == KEY_ESC)
+    {
+        return ACTION_CONTINUE;
+    }
+
     if (key == KEY_CTRL_S)
     {
         if (edit_save(ed->file) != EDIT_OK)
@@ -191,6 +218,7 @@ EditorAction editor_handle_key(Editor *ed, int key, EditorChange *change)
         motion = editor_move_down(ed);
         break;
     case KEY_BACKSPACE:
+    case KEY_CTRL_H:
         return handle_backspace(ed, change);
     default:
         if (key >= 0 && key <= 0xFF)

@@ -10,10 +10,8 @@
 #include <unistd.h>
 
 struct termios saved_termios;
+struct termios raw_termios;
 volatile sig_atomic_t rawmode_enabled = 0;
-
-static const char enter_screen[] = "\033[?1049h\033[H\033[2J";
-static const char leave_screen[] = "\033[?1049l";
 
 static int write_screen(const char *seq)
 {
@@ -38,13 +36,17 @@ int terminal_rawmode_on(void)
         return -1;
     }
 
-    signals_install();
+    if (signals_install() != 0)
+    {
+        return -1;
+    }
 
     struct termios raw = saved_termios;
-    raw.c_lflag &= ~(ICANON | ECHO);
+    raw.c_lflag &= ~(ICANON | ECHO | ISIG);
     raw.c_iflag &= ~(IXON | IXOFF | IXANY);
     raw.c_cc[VMIN] = 1;
     raw.c_cc[VTIME] = 0;
+    raw_termios = raw;
 
     if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) == -1)
     {
@@ -52,7 +54,7 @@ int terminal_rawmode_on(void)
         return -1;
     }
 
-    if (write_screen(enter_screen) != 0)
+    if (write_screen(TERMINAL_ENTER_SCREEN) != 0)
     {
         perror("error: cannot switch the screen");
         tcsetattr(STDIN_FILENO, TCSANOW, &saved_termios);
@@ -79,7 +81,7 @@ int terminal_rawmode_off(void)
 
     rawmode_enabled = 0;
 
-    if (write_screen(leave_screen) != 0)
+    if (write_screen(TERMINAL_LEAVE_SCREEN) != 0)
     {
         perror("error: cannot switch the screen");
         rc = -1;
@@ -93,8 +95,7 @@ Size terminal_size(void)
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_row == 0 || ws.ws_col == 0)
     {
-        Size fallback = {24, 80};
-        return fallback;
+        return size_fallback();
     }
     Size size = {(size_t)ws.ws_row, (size_t)ws.ws_col};
     return size;

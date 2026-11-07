@@ -4,40 +4,25 @@
 #include "../viewport/viewport.h"
 #include "../viewport/geometry.h"
 #include "../buffer/buffer.h"
+#include "../text/text.h"
 #include "../editor/editor_types.h"
 
 static int write_clipped_line(const char *limit, const char *start, size_t width,
                               const char **next)
 {
     const char *end = start;
-    while (end < limit && *end != '\n' && (size_t)(end - start) < width)
+    while (end < limit && *end != '\n')
+    {
         end++;
+    }
 
-    if (escape_write(start, (size_t)(end - start)) != 0)
+    if (escape_write_text(start, (size_t)(end - start), width, NULL) != 0)
+    {
         return -1;
+    }
 
-    const char *tail = end;
-    while (tail < limit && *tail != '\n')
-        tail++;
-
-    *next = tail < limit ? tail + 1 : NULL;
+    *next = end < limit ? end + 1 : NULL;
     return 0;
-}
-
-static int position_cursor(const Editor *ed, const Viewport *vp)
-{
-    size_t row, column;
-    buffer_row_column(ed->file->data, ed->file->len, ed->cursor, &row, &column);
-
-    size_t screen_row = row >= vp->top_row ? row - vp->top_row : 0;
-    size_t rows = viewport_size(vp).rows;
-    if (screen_row > rows - 1) screen_row = rows - 1;
-
-    size_t screen_column = column;
-    size_t width = size_content_width(viewport_size(vp));
-    if (screen_column > width) screen_column = width;
-
-    return escape_goto_position(screen_row, screen_column);
 }
 
 int render_draw(const Editor *ed, const Viewport *vp)
@@ -60,7 +45,7 @@ int render_draw(const Editor *ed, const Viewport *vp)
     }
 
     if (status_paint(ed, vp) != 0) return -1;
-    if (position_cursor(ed, vp) != 0) return -1;
+    if (status_position_cursor(ed, vp) != 0) return -1;
     return escape_flush();
 }
 
@@ -70,8 +55,8 @@ static int redraw_from(const Editor *ed, const Viewport *vp, size_t start)
     size_t width = size_content_width(viewport_size(vp));
     size_t rows = viewport_size(vp).rows;
 
-    size_t start_row, column;
-    buffer_row_column(ed->file->data, ed->file->len, start, &start_row, &column);
+    size_t start_row;
+    buffer_row_column(ed->file->data, ed->file->len, start, &start_row, NULL);
 
     size_t first_screen_row = start_row - vp->top_row;
 
@@ -96,23 +81,20 @@ static int redraw_from(const Editor *ed, const Viewport *vp, size_t start)
     }
 
     if (status_paint(ed, vp) != 0) return -1;
-    if (position_cursor(ed, vp) != 0) return -1;
+    if (status_position_cursor(ed, vp) != 0) return -1;
     return escape_flush();
-}
-
-static int move_cursor(const Editor *ed, const Viewport *vp)
-{
-    return status_refresh(ed, vp);
 }
 
 static int append_byte(const Editor *ed, const Viewport *vp, char byte)
 {
-    size_t row, column;
-    buffer_row_column(ed->file->data, ed->file->len, ed->cursor, &row, &column);
+    size_t start = buffer_line_start_index(ed->file->data, ed->cursor);
+    size_t column = text_width(ed->file->data, start, ed->cursor);
+    unsigned char value = (unsigned char)byte;
 
-    if (byte == '\n' || column > size_content_width(viewport_size(vp)))
+    if (value < 0x20 || value == 0x7f || value >= 0x80 ||
+        column > size_content_width(viewport_size(vp)))
     {
-        return redraw_from(ed, vp, buffer_line_start_index(ed->file->data, ed->cursor));
+        return redraw_from(ed, vp, start);
     }
 
     if (escape_putc(byte) != 0) return -1;
@@ -121,8 +103,8 @@ static int append_byte(const Editor *ed, const Viewport *vp, char byte)
 
 int render_apply_change(const Editor *ed, Viewport *vp, const EditorChange *change)
 {
-    size_t row, column;
-    buffer_row_column(ed->file->data, ed->file->len, ed->cursor, &row, &column);
+    size_t row;
+    buffer_row_column(ed->file->data, ed->file->len, ed->cursor, &row, NULL);
 
     if (viewport_ensure_visible(vp, row))
     {
@@ -134,9 +116,7 @@ int render_apply_change(const Editor *ed, Viewport *vp, const EditorChange *chan
     case CHANGE_NONE:
         return status_refresh(ed, vp);
     case CHANGE_CURSOR:
-        if (change->motion == CURSOR_MOTION_NONE)
-            return status_refresh(ed, vp);
-        return move_cursor(ed, vp);
+        return status_refresh(ed, vp);
     case CHANGE_LINE:
         return redraw_from(ed, vp, change->start);
     case CHANGE_APPEND:

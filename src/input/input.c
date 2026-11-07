@@ -1,43 +1,100 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "input.h"
-#include "key.h"
-#include <stdio.h>
+
+#include <errno.h>
+#include <unistd.h>
+
+#include "../terminal/signals.h"
+
+static int pending = -1;
+
+static int read_byte(void)
+{
+    if (pending >= 0)
+    {
+        int byte = pending;
+        pending = -1;
+        return byte;
+    }
+
+    for (;;)
+    {
+        unsigned char byte;
+        ssize_t count = read(STDIN_FILENO, &byte, 1);
+
+        if (count == 1)
+        {
+            return (int)byte;
+        }
+        if (count == 0)
+        {
+            return INPUT_EOF;
+        }
+        if (errno == EINTR)
+        {
+            if (signals_take_resize())
+            {
+                return KEY_RESIZE;
+            }
+            continue;
+        }
+        return INPUT_ERROR;
+    }
+}
+
+static int read_arrow(void)
+{
+    int segment1 = read_byte();
+    if (segment1 < 0 || segment1 == KEY_RESIZE)
+    {
+        return segment1;
+    }
+
+    if (segment1 != '[' && segment1 != 'O')
+    {
+        /* A lone ESC followed by a normal key: keep the key for the
+         * next call instead of swallowing it. */
+        pending = segment1;
+        return KEY_ESC;
+    }
+
+    int segment2 = read_byte();
+    if (segment2 < 0 || segment2 == KEY_RESIZE)
+    {
+        return segment2;
+    }
+
+    switch (segment2)
+    {
+    case 'A':
+        return KEY_UP;
+    case 'B':
+        return KEY_DOWN;
+    case 'C':
+        return KEY_RIGHT;
+    case 'D':
+        return KEY_LEFT;
+    default:
+        return KEY_ESC;
+    }
+}
 
 int input_scan(void)
 {
-    int c = getchar();
+    int key = read_byte();
 
-    if (c == EOF && ferror(stdin))
+    if (key < 0 || key == KEY_RESIZE)
     {
-        return EOF;
+        return key;
     }
-    else if (c == KEY_CTRL_S)
+    if (key == KEY_CTRL_H)
     {
-        c = KEY_CTRL_S;
+        return KEY_BACKSPACE;
     }
-    else if (c == KEY_CTRL_H)
+    if (key == KEY_ESC)
     {
-        c = KEY_BACKSPACE;
+        return read_arrow();
     }
-    else if (c == KEY_ESC)
-    {
-        int segment1 = getchar();
-        if (segment1 == EOF) return EOF;
-
-        if (segment1 == '[' || segment1 == 'O')
-        {
-            int segment2 = getchar();
-            if (segment2 == EOF) return EOF;
-
-            switch (segment2)
-            {
-            case 'A': c = KEY_UP; break;
-            case 'B': c = KEY_DOWN; break;
-            case 'C': c = KEY_RIGHT; break;
-            case 'D': c = KEY_LEFT; break;
-            case EOF: return EOF;
-            }
-        }
-    }
-
-    return c;
+    return key;
 }
