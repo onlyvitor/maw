@@ -106,6 +106,7 @@ tests/unit_test.c         unit suite
 tests/test_editor.py      pty end-to-end suite
 docs/TERMINAL.md          terminal, signals and raw mode notes
 docs/IO.md                input, rendering and save flow notes
+docs/FILES.md             responsibility of every project file
 ```
 
 ## Tests
