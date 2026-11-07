@@ -1,6 +1,7 @@
 oldvim
 target
 .vscode
+.idea/
 *.tmp.*
 text.rst
 tests/unit_tests
