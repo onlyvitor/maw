@@ -400,6 +400,69 @@ def test_non_interactive_stdin(tmp):
     assert case.read(path) == b"ZZ"
 
 
+def test_markdown_highlights_headings_and_links(tmp):
+    case = Case(tmp)
+    path = case.write("notes.md", b"# Title\n[link](https://example.com)\n")
+    session = Session(path)
+
+    frame = last_frame(session.initial)
+
+    assert b"\x1b[1;33m# Title\x1b[0m" in frame, "headings use the heading color"
+    assert (
+        b"\x1b[4;34m[link](https://example.com)\x1b[0m" in frame
+    ), "links use the link color"
+    session.quit()
+
+
+def test_markdown_ignores_code_blocks_and_spans(tmp):
+    case = Case(tmp)
+    path = case.write(
+        "code.md",
+        b"```\n# hidden\n[x](y)\n```\n`[z](w)`\n",
+    )
+    session = Session(path)
+
+    frame = last_frame(session.initial)
+
+    assert b"\x1b[1;33m" not in frame, "headings inside code are not styled"
+    assert b"\x1b[4;34m" not in frame, "links inside code are not styled"
+    session.quit()
+
+
+def test_plain_text_is_not_highlighted(tmp):
+    case = Case(tmp)
+    path = case.write("plain.txt", b"# Title\n[a](b)\n")
+    session = Session(path)
+
+    frame = last_frame(session.initial)
+
+    assert b"\x1b[1;33m" not in frame, "non-Markdown files keep default color"
+    assert b"\x1b[4;34m" not in frame, "non-Markdown files keep default color"
+    session.quit()
+
+
+def test_markdown_heading_recolors_while_typing(tmp):
+    case = Case(tmp)
+    path = case.write("typing.md", b"")
+    session = Session(path)
+
+    output = session.send(b"# Title")
+
+    assert b"\x1b[1;33m# Title\x1b[0m" in output, "the typed heading is styled"
+    session.quit()
+
+
+def test_markdown_link_recolors_when_closed(tmp):
+    case = Case(tmp)
+    path = case.write("link.md", b"")
+    session = Session(path)
+
+    output = session.send(b"[x](y)")
+
+    assert b"\x1b[4;34m[x](y)\x1b[0m" in output, "the closed link is styled"
+    session.quit()
+
+
 def main():
     tests = [
         test_insert_at_end,
@@ -424,6 +487,11 @@ def main():
         test_save_then_keep_editing,
         test_quit_without_edits_does_not_rewrite_the_file,
         test_non_interactive_stdin,
+        test_markdown_highlights_headings_and_links,
+        test_markdown_ignores_code_blocks_and_spans,
+        test_plain_text_is_not_highlighted,
+        test_markdown_heading_recolors_while_typing,
+        test_markdown_link_recolors_when_closed,
     ]
     failed = 0
 

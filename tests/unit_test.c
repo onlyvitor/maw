@@ -12,6 +12,7 @@
 #include "src/editor/editor.h"
 #include "src/editor/edit_ops.h"
 #include "src/fileio/fileio.h"
+#include "src/syntax/markdown.h"
 #include "src/text/text.h"
 #include "src/viewport/geometry.h"
 #include "src/viewport/viewport.h"
@@ -195,6 +196,11 @@ static void test_text_width_and_offsets(void)
     CHECK_SIZE(text_width("\x01", 0, 1), 2);
     CHECK_SIZE(text_width("\xC3\xA9", 0, 2), 1);
     CHECK_SIZE(text_width("\xE4\xB8\xAD", 0, 3), 2);
+
+    CHECK_SIZE(text_width_from("a\t", 0, 2, 0), 8);
+    CHECK_SIZE(text_width_from("a\t", 0, 2, 3), 5);
+    CHECK_SIZE(text_width_from("\t", 0, 1, 9), 7);
+    CHECK_SIZE(text_width_from("ab", 0, 2, 4), 2);
 
     const char *data = "a" "\xC3\xA9" "z";
     CHECK_SIZE(text_next_offset(data, 4, 0), 1);
@@ -622,6 +628,163 @@ static void test_size_viewport_reserves_status_line(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* markdown tests                                                      */
+/* ------------------------------------------------------------------ */
+
+static size_t scan_markdown(MarkdownState *state, const char *line,
+                            MdSpan *spans)
+{
+    return markdown_scan_line(state, line, strlen(line), spans, MD_MAX_SPANS);
+}
+
+static void test_markdown_applies(void)
+{
+    CHECK(markdown_applies("notes.md"));
+    CHECK(markdown_applies("/tmp/README.MD"));
+    CHECK(markdown_applies("a.markdown"));
+    CHECK(markdown_applies("a.MarkDown"));
+
+    CHECK(!markdown_applies("notes.txt"));
+    CHECK(!markdown_applies("md"));
+    CHECK(!markdown_applies("notes.md.txt"));
+    CHECK(!markdown_applies("notes.mdown"));
+    CHECK(!markdown_applies(".mdx"));
+    CHECK(!markdown_applies(NULL));
+}
+
+static void test_markdown_headings(void)
+{
+    MarkdownState state;
+    MdSpan spans[MD_MAX_SPANS];
+    size_t n;
+
+    markdown_state_init(&state);
+
+    const char *heading = "# Title";
+    n = scan_markdown(&state, heading, spans);
+    CHECK_SIZE(n, 1);
+    CHECK_SIZE(spans[0].start, 0);
+    CHECK_SIZE(spans[0].end, strlen(heading));
+    CHECK(spans[0].style == MD_STYLE_HEADING);
+
+    CHECK_SIZE(scan_markdown(&state, "   ### indented", spans), 1);
+    CHECK_SIZE(scan_markdown(&state, "#", spans), 1);
+    CHECK_SIZE(scan_markdown(&state, "#\tTab", spans), 1);
+    CHECK_SIZE(scan_markdown(&state, "###### six", spans), 1);
+
+    CHECK_SIZE(scan_markdown(&state, "#nospace", spans), 0);
+    CHECK_SIZE(scan_markdown(&state, "####### seven", spans), 0);
+    CHECK_SIZE(scan_markdown(&state, "    # four spaces", spans), 0);
+    CHECK_SIZE(scan_markdown(&state, "text # not", spans), 0);
+
+    n = scan_markdown(&state, "####\r", spans);
+    CHECK_SIZE(n, 1);
+    CHECK_SIZE(spans[0].end, 4);
+}
+
+static void test_markdown_links(void)
+{
+    MarkdownState state;
+    MdSpan spans[MD_MAX_SPANS];
+    size_t n;
+
+    markdown_state_init(&state);
+
+    const char *line = "see [docs](https://x.y) and [b](c)";
+    n = scan_markdown(&state, line, spans);
+    CHECK_SIZE(n, 2);
+    CHECK_SIZE(spans[0].start, strlen("see "));
+    CHECK_SIZE(spans[0].end, strlen("see [docs](https://x.y)"));
+    CHECK(spans[0].style == MD_STYLE_LINK);
+    CHECK_SIZE(spans[1].start, strlen("see [docs](https://x.y) and "));
+    CHECK_SIZE(spans[1].end, strlen(line));
+
+    n = scan_markdown(&state, "[a](b(c)d)", spans);
+    CHECK_SIZE(n, 1);
+    CHECK_SIZE(spans[0].end, strlen("[a](b(c)d)"));
+
+    n = scan_markdown(&state, "![alt](img.png)", spans);
+    CHECK_SIZE(n, 1);
+    CHECK_SIZE(spans[0].start, 0);
+    CHECK_SIZE(spans[0].end, strlen("![alt](img.png)"));
+
+    n = scan_markdown(&state, "# [a](b)", spans);
+    CHECK_SIZE(n, 1);
+    CHECK(spans[0].style == MD_STYLE_HEADING);
+
+    CHECK_SIZE(scan_markdown(&state, "\\[a](b)", spans), 0);
+    CHECK_SIZE(scan_markdown(&state, "[a](b", spans), 0);
+    CHECK_SIZE(scan_markdown(&state, "[a] (b)", spans), 0);
+
+    CHECK_SIZE(scan_markdown(&state, "`[a](b)`", spans), 0);
+    CHECK_SIZE(scan_markdown(&state, "``a `[b](c)` d``", spans), 0);
+
+    const char *many = "[a](1) [b](2) [c](3)";
+    CHECK_SIZE(markdown_scan_line(&state, many, strlen(many), spans, 2), 2);
+}
+
+static void test_markdown_fences(void)
+{
+    MarkdownState state;
+    MdSpan spans[MD_MAX_SPANS];
+
+    markdown_state_init(&state);
+    CHECK_SIZE(scan_markdown(&state, "```", spans), 0);
+    CHECK(state.in_fence);
+    CHECK(state.fence_char == '`');
+    CHECK_SIZE(state.fence_len, 3);
+
+    CHECK_SIZE(scan_markdown(&state, "# hidden", spans), 0);
+    CHECK_SIZE(scan_markdown(&state, "[a](b)", spans), 0);
+    CHECK_SIZE(scan_markdown(&state, "``` trailing", spans), 0);
+    CHECK(state.in_fence);
+
+    CHECK_SIZE(scan_markdown(&state, "````", spans), 0);
+    CHECK(!state.in_fence);
+    CHECK_SIZE(scan_markdown(&state, "# visible", spans), 1);
+
+    markdown_state_init(&state);
+    CHECK_SIZE(scan_markdown(&state, "````", spans), 0);
+    CHECK_SIZE(scan_markdown(&state, "```", spans), 0);
+    CHECK(state.in_fence);
+    CHECK_SIZE(scan_markdown(&state, "~~~~", spans), 0);
+    CHECK(state.in_fence);
+    CHECK_SIZE(scan_markdown(&state, "`````", spans), 0);
+    CHECK(!state.in_fence);
+
+    markdown_state_init(&state);
+    CHECK_SIZE(scan_markdown(&state, "~~~ python", spans), 0);
+    CHECK(state.in_fence);
+    CHECK(state.fence_char == '~');
+    CHECK_SIZE(scan_markdown(&state, "~~~", spans), 0);
+    CHECK(!state.in_fence);
+
+    markdown_state_init(&state);
+    CHECK_SIZE(scan_markdown(&state, "    ```", spans), 0);
+    CHECK(!state.in_fence);
+}
+
+static void test_markdown_state_at(void)
+{
+    const char *data = "```\n# hidden\n```\n# visible\n";
+    size_t len = strlen(data);
+    size_t visible = strlen("```\n# hidden\n```\n");
+    MarkdownState state;
+    MdSpan spans[MD_MAX_SPANS];
+
+    markdown_state_at(data, len, 0, &state);
+    CHECK(!state.in_fence);
+
+    markdown_state_at(data, len, strlen("```\n"), &state);
+    CHECK(state.in_fence);
+
+    markdown_state_at(data, len, visible, &state);
+    CHECK(!state.in_fence);
+    CHECK_SIZE(markdown_scan_line(&state, data + visible, len - visible,
+                                  spans, MD_MAX_SPANS), 1);
+}
+
+/* ------------------------------------------------------------------ */
 /* main                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -664,6 +827,12 @@ int main(void)
     test_resize_only_reports_changes();
     test_size_clamps_and_content_width();
     test_size_viewport_reserves_status_line();
+
+    test_markdown_applies();
+    test_markdown_headings();
+    test_markdown_links();
+    test_markdown_fences();
+    test_markdown_state_at();
 
     if (failures != 0)
     {
