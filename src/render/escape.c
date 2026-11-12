@@ -48,7 +48,14 @@ int escape_erase_below(void)
 int escape_write_text(const char *text, size_t len, size_t max_cells,
                       size_t *cells)
 {
+    return escape_write_text_at(text, len, 0, max_cells, cells);
+}
+
+int escape_write_text_at(const char *text, size_t len, size_t start_cell,
+                         size_t max_cells, size_t *cells)
+{
     size_t used = 0;
+    size_t column = start_cell;
     size_t pos = 0;
 
     while (pos < len && used < max_cells)
@@ -65,7 +72,7 @@ int escape_write_text(const char *text, size_t len, size_t max_cells,
         }
         if (byte == '\t')
         {
-            size_t spaces = TEXT_TAB_WIDTH - used % TEXT_TAB_WIDTH;
+            size_t spaces = TEXT_TAB_WIDTH - column % TEXT_TAB_WIDTH;
             if (spaces > max_cells - used)
             {
                 spaces = max_cells - used;
@@ -77,6 +84,7 @@ int escape_write_text(const char *text, size_t len, size_t max_cells,
                     return -1;
                 }
                 used++;
+                column++;
                 spaces--;
             }
             pos++;
@@ -94,6 +102,7 @@ int escape_write_text(const char *text, size_t len, size_t max_cells,
                 return -1;
             }
             used += 2;
+            column += 2;
             pos++;
             continue;
         }
@@ -138,6 +147,7 @@ int escape_write_text(const char *text, size_t len, size_t max_cells,
         }
 
         used += char_cells;
+        column += char_cells;
         pos += length;
     }
 
@@ -146,4 +156,40 @@ int escape_write_text(const char *text, size_t len, size_t max_cells,
         *cells = used;
     }
     return 0;
+}
+
+int escape_write_styled_text(const char *text, size_t len, size_t max_cells,
+                             const char *sgr, size_t *cells)
+{
+    return escape_write_styled_text_at(text, len, 0, max_cells, sgr, cells);
+}
+
+int escape_write_styled_text_at(const char *text, size_t len,
+                                size_t start_cell, size_t max_cells,
+                                const char *sgr, size_t *cells)
+{
+    size_t used = 0;
+    int result = 0;
+
+    if (escape_puts(sgr) != 0)
+    {
+        return -1;
+    }
+
+    if (escape_write_text_at(text, len, start_cell, max_cells, &used) != 0)
+    {
+        result = -1;
+    }
+
+    /* Never leave the terminal in a colored state, even on failure. */
+    if (escape_puts("\033[0m") != 0)
+    {
+        return -1;
+    }
+
+    if (cells != NULL)
+    {
+        *cells = used;
+    }
+    return result;
 }

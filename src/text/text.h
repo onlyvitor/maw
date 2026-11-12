@@ -18,6 +18,11 @@ size_t text_char_cells(const char *data, size_t len, size_t pos);
  * stops. A '\r' that ends the slice (a CRLF ending) takes no cells. */
 size_t text_width(const char *data, size_t start, size_t end);
 
+/* Like text_width, but the slice starts at display column start_cell,
+ * so tabs expand to the correct stop after a styled prefix. */
+size_t text_width_from(const char *data, size_t start, size_t end,
+                       size_t start_cell);
+
 /* Byte offset of the previous/next character boundary. */
 size_t text_prev_offset(const char *data, size_t pos);
 size_t text_next_offset(const char *data, size_t len, size_t pos);

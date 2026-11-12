@@ -17,6 +17,7 @@ SRC := src/main.c \
        src/render/escape.c \
        src/render/status.c \
        src/render/render.c \
+       src/syntax/markdown.c \
        src/text/text.c \
        src/viewport/geometry.c \
        src/viewport/viewport.c \
@@ -29,6 +30,7 @@ UNIT_SRC := tests/unit_test.c \
             src/editor/editor.c \
             src/editor/edit_ops.c \
             src/fileio/fileio.c \
+            src/syntax/markdown.c \
             src/text/text.c \
             src/viewport/geometry.c \
             src/viewport/viewport.c

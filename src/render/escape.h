@@ -22,4 +22,22 @@ int escape_erase_below(void);
 int escape_write_text(const char *text, size_t len, size_t max_cells,
                       size_t *cells);
 
+/* Like escape_write_text, but the text starts at display column
+ * start_cell, so tabs expand to the correct stop. */
+int escape_write_text_at(const char *text, size_t len, size_t start_cell,
+                         size_t max_cells, size_t *cells);
+
+/* Write text like escape_write_text but wrapped in the given SGR
+ * sequence. Attributes are always reset afterwards, including when the
+ * write fails or the text is clipped. `sgr` must be a fixed escape
+ * sequence, never file content. Returns 0 on success and stores the
+ * cells written in *cells. */
+int escape_write_styled_text(const char *text, size_t len, size_t max_cells,
+                             const char *sgr, size_t *cells);
+
+/* Styled variant of escape_write_text_at. */
+int escape_write_styled_text_at(const char *text, size_t len,
+                                size_t start_cell, size_t max_cells,
+                                const char *sgr, size_t *cells);
+
 #endif

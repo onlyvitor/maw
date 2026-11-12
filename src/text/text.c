@@ -142,7 +142,14 @@ size_t text_char_cells(const char *data, size_t len, size_t pos)
 
 size_t text_width(const char *data, size_t start, size_t end)
 {
+    return text_width_from(data, start, end, 0);
+}
+
+size_t text_width_from(const char *data, size_t start, size_t end,
+                       size_t start_cell)
+{
     size_t width = 0;
+    size_t column = start_cell;
     size_t pos = start;
 
     while (pos < end)
@@ -159,28 +166,36 @@ size_t text_width(const char *data, size_t start, size_t end)
         }
         if (byte == '\t')
         {
-            width += TEXT_TAB_WIDTH - width % TEXT_TAB_WIDTH;
+            size_t spaces = TEXT_TAB_WIDTH - column % TEXT_TAB_WIDTH;
+
+            width += spaces;
+            column += spaces;
             pos++;
             continue;
         }
         if (byte < 0x20 || byte == 0x7f)
         {
             width += 2;
+            column += 2;
             pos++;
             continue;
         }
 
         uint32_t codepoint;
         size_t length = decode_utf8(data, end, pos, &codepoint);
+        size_t cells;
 
         if (length == 1 && byte >= 0x80)
         {
-            width++;
+            cells = 1;
         }
         else
         {
-            width += codepoint_cells(codepoint);
+            cells = codepoint_cells(codepoint);
         }
+
+        width += cells;
+        column += cells;
         pos += length;
     }
 
