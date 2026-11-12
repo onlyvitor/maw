@@ -16,8 +16,8 @@ save. The window scrolls to follow the cursor; only the rows a key
 disturbed are repainted.
 
 The implementation is pure C17 under `src/`: `app/`, `buffer/`,
-`editor/`, `fileio/`, `input/`, `render/`, `terminal/`, `text/` and
-`viewport/`. The terminal and I/O contracts are described in
+`editor/`, `fileio/`, `input/`, `render/`, `syntax/`, `terminal/`,
+`text/` and `viewport/`. The terminal and I/O contracts are described in
 `docs/TERMINAL.md` and `docs/IO.md`.
 
 ## Building
@@ -83,6 +83,22 @@ Piping stdin into the editor works without a tty as well:
 printf 'ZZ' | maw file.txt > /dev/null
 ```
 
+## Markdown
+
+Files whose name ends in `.md` or `.markdown` (case-insensitive) are
+highlighted:
+
+- ATX headings (`#` through `######`) are drawn in bold yellow;
+- inline links `[text](url)` are drawn in underlined blue;
+- fenced code blocks (three or more backticks or tildes) and inline
+  code spans keep the default colors, so markup inside them is not
+  highlighted.
+
+Only the visible lines are scanned. The fenced-block state is rebuilt
+by scanning the buffer up to the first drawn line, so the highlighting
+follows edits without a separate cache. Files with any other extension
+are rendered exactly as before, with no extra escape sequences.
+
 ## Layout
 
 ```
@@ -97,6 +113,7 @@ src/key.h                 the shared key constants
 src/render/render.c       full and partial repaints
 src/render/status.c       status line and cursor placement
 src/render/escape.c       escape codes and sanitized text output
+src/syntax/markdown.c     Markdown headings, links, code spans and fences
 src/terminal/terminal.c   raw mode, geometry and alternate screen
 src/terminal/signals.c    fatal, resize and suspend/resume signals
 src/text/text.c           UTF-8 lengths, display width and tab stops

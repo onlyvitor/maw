@@ -33,7 +33,9 @@ still a single byte and joins lines as before.
   cursor;
 - inserting inside a line or deleting repaints from the line start;
 - appending a printable ASCII byte echoes it in place; control bytes,
-  UTF-8 bytes and over-width appends repaint the line.
+  UTF-8 bytes and over-width appends repaint the line;
+- in Markdown files every append repaints the line, so headings and
+  links are recolored while they are typed.
 
 `escape_write_text` is the only path that writes file content. It
 expands tabs, converts control bytes to caret notation (`^[`, `^M`,
@@ -41,6 +43,17 @@ expands tabs, converts control bytes to caret notation (`^[`, `^M`,
 keeps file contents from injecting escape sequences into the terminal.
 The status line uses the same function for the file name and cursor
 position; the cursor position is the display cell, not the byte offset.
+
+For `.md` and `.markdown` files, `src/syntax/markdown.c` classifies each
+visible line as a sequence of byte spans: ATX headings and inline links
+get a style, while text inside inline code spans and fenced code blocks
+stays neutral. The scanner carries the fence state from line to line;
+the renderer rebuilds it by scanning from the buffer start up to the
+first drawn line. Styles are fixed SGR sequences (bold yellow for
+headings, underlined blue for links) emitted through
+`escape_write_styled_text`, which always resets attributes afterwards.
+Files with other extensions skip the scanner and produce the same
+output as before.
 
 The status line occupies the last screen row in reverse video and shows
 the file name, a `*` while dirty, the 1-based row and display column,

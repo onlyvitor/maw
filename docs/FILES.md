@@ -18,12 +18,13 @@ main.c
     │                  └── text/text.c
     ├── input/input.c ──> key.h
     ├── render/render.c ──> render/status.c ──> render/escape.c
+    │                  └──> syntax/markdown.c
     ├── terminal/terminal.c ──> terminal/signals.c
     └── viewport/viewport.c ──> viewport/geometry.c
 ```
 
-`buffer`, `text`, `viewport`, `editor` and `edit_ops` contain no terminal
-I/O. Only `fileio` touches files, `input` reads stdin, `render` writes
+`buffer`, `text`, `viewport`, `syntax`, `editor` and `edit_ops` contain no
+terminal I/O. Only `fileio` touches files, `input` reads stdin, `render` writes
 stdout and `terminal` calls `termios`/`ioctl`.
 
 ## Entry point and orchestration
@@ -47,7 +48,7 @@ stdout and `terminal` calls `termios`/`ioctl`.
 | `src/fileio/fileio.c` | Loads a file (or starts an empty buffer for a new path), grows the byte buffer on demand, and saves atomically: writes `<file>.tmp.XXXXXX` in the same directory, applies permissions, calls `fsync`, renames over the target and syncs the parent directory. New files use `0666 & ~umask`; existing files keep their `0777` mode bits. Also provides `fileio_from_data` for unit tests. |
 | `src/buffer/buffer.h` | Declares the read-only line helpers over the raw byte buffer: line start, line end, row/byte-column lookup and first byte of a row. |
 | `src/buffer/buffer.c` | Implements those helpers by scanning for `\n`. It knows nothing about terminals, display widths or allocation. A trailing newline opens one final empty row. |
-| `src/text/text.h` | Declares the UTF-8 and display-width contract: character length, character cells, text width, previous/next character boundary and byte offset for a target display column. |
+| `src/text/text.h` | Declares the UTF-8 and display-width contract: character length, character cells, text width (optionally from a starting display column), previous/next character boundary and byte offset for a target display column. |
 | `src/text/text.c` | Custom UTF-8 decoder and width tables. Treats invalid or truncated sequences as one byte, counts combining marks as zero cells, wide/emoji ranges as two cells, expands tabs at 8-column stops and skips a trailing `\r` from CRLF. Used by motions, the status line and the renderer so all columns are measured consistently. |
 
 ## Input and terminal
@@ -62,14 +63,21 @@ stdout and `terminal` calls `termios`/`ioctl`.
 | `src/terminal/signals.h` | Declares `signals_install` and the resize flag consumer `signals_take_resize`. |
 | `src/terminal/signals.c` | Installs handlers for fatal signals (`SIGINT`, `SIGTERM`, `SIGHUP`, `SIGQUIT`), `SIGWINCH`, `SIGTSTP` and `SIGCONT`. Fatal signals restore the terminal and exit with `128 + signum`; resize only sets a flag; suspend restores the terminal and re-raises `SIGTSTP`; continue re-enters raw mode and the alternate screen. Handlers use `write(2)` and stay out of stdio. |
 
+## Syntax
+
+| File | Responsibility |
+| --- | --- |
+| `src/syntax/markdown.h` | Declares the semantic Markdown styles (`heading`, `link`), styled byte spans, fenced-block state and the scanning API. It knows nothing about terminals, escape codes or I/O. |
+| `src/syntax/markdown.c` | Line-based Markdown scanner. Detects ATX headings, inline links, inline code spans and fenced code blocks (carrying fence state from line to line), and returns sorted, non-overlapping byte spans. `markdown_applies` matches the `.md` and `.markdown` extensions case-insensitively; `markdown_state_at` rebuilds the fence state at the first drawn line. |
+
 ## Rendering
 
 | File | Responsibility |
 | --- | --- |
-| `src/render/escape.h` | Declares the low-level output primitives (`puts`, `write`, `putc`, flush, cursor movement, erase) and the sanitized text writer `escape_write_text`. |
-| `src/render/escape.c` | Implements escape-code output and the only safe path for writing file content: clips to display cells, expands tabs, renders control bytes in caret notation and replaces invalid UTF-8 (including C1 controls) with `?`. This prevents file bytes from injecting terminal escapes. |
+| `src/render/escape.h` | Declares the low-level output primitives (`puts`, `write`, `putc`, flush, cursor movement, erase), the sanitized text writer `escape_write_text` and its styled variant `escape_write_styled_text`. |
+| `src/render/escape.c` | Implements escape-code output and the only safe path for writing file content: clips to display cells, expands tabs, renders control bytes in caret notation and replaces invalid UTF-8 (including C1 controls) with `?`. This prevents file bytes from injecting terminal escapes. The styled variant always resets attributes, including on failure or clipping. |
 | `src/render/render.h` | Declares the high-level rendering operations: a full draw and the minimal repaint for a change. |
-| `src/render/render.c` | Implements the repaint strategy. A full draw walks the visible rows and clips each line; `render_apply_change` chooses status-only refresh, line repaint or the append fast path. Scrolling or resizing triggers a full repaint. Printable ASCII appends are echoed in place; control bytes, UTF-8 bytes and over-width appends redraw the line. |
+| `src/render/render.c` | Implements the repaint strategy. A full draw walks the visible rows and clips each line; `render_apply_change` chooses status-only refresh, line repaint or the append fast path. Scrolling or resizing triggers a full repaint. In Markdown files it maps the scanner's spans to fixed SGR colors (bold yellow headings, underlined blue links); every append redraws the line so styled text is updated as it is typed. Printable ASCII appends in other files are echoed in place; control bytes, UTF-8 bytes and over-width appends redraw the line. |
 | `src/render/status.h` | Declares status-line painting, cursor placement and the combined refresh operation. |
 | `src/render/status.c` | Paints the reverse-video status row with the file name, dirty marker, 1-based row/display column and the `^S:save  ^Q:quit` hint. It sanitizes the path through `escape_write_text` and positions the terminal cursor using display cells, clamped to the content width and visible rows. |
 
@@ -86,8 +94,8 @@ stdout and `terminal` calls `termios`/`ioctl`.
 
 | File | Responsibility |
 | --- | --- |
-| `tests/unit_test.c` | Deterministic unit suite. Covers buffer line/row helpers, UTF-8 length and width, cursor motions (including display columns), key handling, backspace over code points, edit operations, file modes/umask and viewport/geometry. Uses the local `CHECK`/`CHECK_SIZE` macros; new test functions must be added to `main`. |
-| `tests/test_editor.py` | End-to-end suite driven through a pty. Spawns the built binary, sends real key bytes and asserts screen output and file contents. Covers editing, scrolling, clipping, resize, suspend/resume, sanitization, UTF-8, the status line, alternate screen, save semantics and non-interactive stdin. |
+| `tests/unit_test.c` | Deterministic unit suite. Covers buffer line/row helpers, UTF-8 length and width, cursor motions (including display columns), key handling, backspace over code points, edit operations, file modes/umask, viewport/geometry and the Markdown scanner (headings, links, inline code, fences and extension matching). Uses the local `CHECK`/`CHECK_SIZE` macros; new test functions must be added to `main`. |
+| `tests/test_editor.py` | End-to-end suite driven through a pty. Spawns the built binary, sends real key bytes and asserts screen output and file contents. Covers editing, scrolling, clipping, resize, suspend/resume, sanitization, UTF-8, the status line, alternate screen, save semantics, non-interactive stdin and Markdown highlighting (including suppression inside code). |
 | `Makefile` | Build and test entry points. `all`/`debug` produce `maw`; `release` uses `-O2`; `run` opens `text.rst`; `test-unit` builds and runs the unit suite; `test` also runs the pty suite with `MAW_BIN=./maw`; `test-sanitize` builds both with ASan/UBSan; `clean` removes generated binaries. `CC` defaults to clang but can be overridden; headers are discovered automatically. |
 
 Generated artifacts (`maw`, `tests/unit_tests`, `__pycache__/`) are
